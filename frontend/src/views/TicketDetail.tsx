@@ -4,8 +4,9 @@ import {
   Badge, Field, Money, toast,
 } from '../ui';
 import {
-  TICKET_TYPE, TICKET_STATUS, ROLE, ROLE_COLOR, RESOLUTION, CATEGORY,
+  TICKET_TYPE, TICKET_STATUS, ROLE, ROLE_COLOR, RESOLUTION, CATEGORY, RESCHEDULE_STATUS,
 } from '../labels';
+import { ReschedulePage } from './Reschedule';
 
 export function TicketDetail({ id, onBack }: { id: string; onBack: () => void }) {
   const me = getUser()!;
@@ -13,13 +14,29 @@ export function TicketDetail({ id, onBack }: { id: string; onBack: () => void })
   const [content, setContent] = useState('');
   const [showResolve, setShowResolve] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [rsSummary, setRsSummary] = useState<any | null>(null);
+  const [showRs, setShowRs] = useState(false);
 
   const load = () => api(`/tickets/${id}`).then(setData);
   useEffect(() => {
     load();
   }, [id]);
 
+  const orderId = data?.order?.id;
+  useEffect(() => {
+    if (!orderId) {
+      setRsSummary(null);
+      return;
+    }
+    let alive = true;
+    api(`/reschedules/order/${orderId}`).then((d) => alive && setRsSummary(d)).catch(() => alive && setRsSummary(null));
+    return () => { alive = false; };
+  }, [orderId]);
+
   if (!data) return <div className="empty">加载中…</div>;
+  if (showRs && orderId) {
+    return <ReschedulePage orderId={orderId} onBack={() => { setShowRs(false); load(); }} />;
+  }
   const { ticket, messages, consignment, item, order, delivery } = data;
   const isCs = ['CS', 'OPS', 'ADMIN'].includes(me.role);
 
@@ -56,6 +73,20 @@ export function TicketDetail({ id, onBack }: { id: string; onBack: () => void })
         </div>
         {isCs && ticket.status !== 'CLOSED' && ticket.resolution === 'PENDING' && (
           <button className="btn" onClick={() => setShowResolve(true)}>客服裁定</button>
+        )}
+        {ticket.type === 'ELEVATOR_BLOCK' && order && (
+          <div style={{ marginTop: 10 }}>
+            {rsSummary ? (
+              <button className="btn" onClick={() => setShowRs(true)}>
+                🛗 查看配送改约单
+                <span style={{ marginLeft: 6 }}>
+                  <Badge map={RESCHEDULE_STATUS} value={rsSummary.reschedule.status} />
+                </span>
+              </button>
+            ) : (
+              <span className="muted">配送员尚未登记现场改约（需配送账号在配送调度中发起）。</span>
+            )}
+          </div>
         )}
       </div>
 

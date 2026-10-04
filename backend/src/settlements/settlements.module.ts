@@ -17,6 +17,10 @@ import { Item } from '../entities/item.entity';
 import { Appraisal } from '../entities/appraisal.entity';
 import { Ticket } from '../entities/ticket.entity';
 import { Consignment } from '../entities/consignment.entity';
+import {
+  DeliveryReschedule,
+  DeliveryReschedulePlan,
+} from '../entities/delivery-reschedule.entity';
 import { JwtAuthGuard } from '../auth/jwt.guard';
 import { RolesGuard, Roles } from '../auth/roles.guard';
 
@@ -117,6 +121,120 @@ export class SettlementController {
         )
         .reduce((s, t) => s + Number(t.compensationAmount), 0);
 
+      // ---- 配送改约（家具进不了电梯/楼道）带来的费用与责任分流 ----
+      const rs = await m.findOne(DeliveryReschedule, {
+        where: { orderId: order.id },
+      });
+      const rsPlans = rs
+        ? await m.find(DeliveryReschedulePlan, {
+            where: { rescheduleId: rs.id },
+            order: { createdAt: 'ASC' },
+          })
+        : [];
+      let rsBuyerCharges = 0; // 买家承担的改约费用（平台收入/冲抵退款）
+      let rsPlatformCosts = 0; // 平台吸收的改约损失
+      let rsThirdPartyComp = 0; // 吊装公司赔付
+      const rsEntries: {
+        type: any;
+        amount: number;
+        source: string;
+        ref: string | null;
+      }[] = [];
+      const r2 = (n: number) => Math.round(n * 100) / 100;
+      if (rs) {
+        if (returned) {
+          const freight = Number(rs.returnFreight);
+          const restock = Number(rs.restockingFee);
+          if (freight > 0) {
+            rsEntries.push({
+              type: 'RESCHEDULE_FEE',
+              amount: -freight,
+              source: `退货回程运费 ¥${freight}（来源：改约单回库登记；电梯受阻退货，平台吸收）`,
+              ref: rs.id,
+            });
+            rsPlatformCosts += freight;
+          }
+          if (restock > 0) {
+            rsEntries.push({
+              type: 'RESCHEDULE_FEE',
+              amount: -restock,
+              source: `回库复检/入库费 ¥${restock}（来源：改约单回库登记，平台吸收）`,
+              ref: rs.id,
+            });
+            rsPlatformCosts += restock;
+          }
+        } else {
+          // 送达完结：买家选定且成功的方案费用（拆装加价 / 吊装费 / 改地址二次配送费）
+          const okPlan = rsPlans.find(
+            (p) =>
+              p.status === 'SUCCESS' &&
+              ['DISASSEMBLY', 'HOISTING', 'CHANGE_ADDRESS'].includes(p.plan),
+          );
+          if (okPlan) {
+            const fee = Number(okPlan.quotedFee);
+            if (fee > 0) {
+              const labelMap: Record<string, string> = {
+                DISASSEMBLY: '现场拆装上楼人力加价',
+                HOISTING: '吊装作业费（已完成吊装公司/物业许可/天气/保险四项确认）',
+                CHANGE_ADDRESS: '改送新地址二次配送费',
+              };
+              const planMap: Record<string, string> = {
+                DISASSEMBLY: '拆装上楼',
+                HOISTING: '吊装',
+                CHANGE_ADDRESS: '改送其他地址',
+              };
+              rsEntries.push({
+                type: 'RESCHEDULE_FEE',
+                amount: fee,
+                source: `${labelMap[okPlan.plan]} ¥${fee}（来源：配送改约单，买家选择「${planMap[okPlan.plan]}」方案）`,
+                ref: rs.id,
+              });
+              rsBuyerCharges += fee;
+            }
+          }
+        }
+        // 吊装失败的已发生费用按三类定责（送达/退货场景都可能先经历失败再改方案）
+        for (const p of rsPlans.filter(
+          (p) => p.plan === 'HOISTING' && p.status === 'FAILED',
+        )) {
+          const cost = Number(p.failureCost);
+          const comp = Number(p.thirdPartyCompensation);
+          if (p.failureLiability === 'BUYER_ENVIRONMENT') {
+            rsEntries.push({
+              type: 'RESCHEDULE_FEE',
+              amount: cost,
+              source: `吊装失败（买家环境限制：${p.failureNote || '锚点/窗型/物业等现场条件不具备'}）已发生费用 ¥${cost}，由买家承担（来源：改约单吊装失败定责）`,
+              ref: rs.id,
+            });
+            rsBuyerCharges += cost;
+          } else if (p.failureLiability === 'PLAN_MISJUDGMENT') {
+            rsEntries.push({
+              type: 'RESCHEDULE_FEE',
+              amount: -cost,
+              source: `吊装失败（配送方案误判：${p.failureNote || '勘测/选案错误'}）已发生费用 ¥${cost}，平台吸收（来源：改约单吊装失败定责）`,
+              ref: rs.id,
+            });
+            rsPlatformCosts += cost;
+          } else if (p.failureLiability === 'THIRD_PARTY') {
+            rsEntries.push({
+              type: 'RESCHEDULE_FEE',
+              amount: -cost,
+              source: `吊装失败（第三方责任：${p.failureNote || '吊装公司操作/设备问题'}）作业进场费 ¥${cost}，平台先行承担`,
+              ref: rs.id,
+            });
+            rsEntries.push({
+              type: 'THIRD_PARTY_COMPENSATION',
+              amount: comp,
+              source: `吊装公司认赔 ¥${comp}（来源：改约单第三方责任赔付，冲抵平台损失）`,
+              ref: rs.id,
+            });
+            rsPlatformCosts += cost;
+            rsThirdPartyComp += comp;
+          }
+        }
+      }
+      const rsDelta = r2(rsBuyerCharges + rsThirdPartyComp - rsPlatformCosts);
+
       const entries: Partial<SettlementEntry>[] = [];
       const add = (
         type: any,
@@ -164,7 +282,12 @@ export class SettlementController {
             `配送费（来源：楼层/电梯/旧家具搬出计价；退货返程由平台承担）`,
           );
         }
-        platformIncome = -(refurb + storageFee + deliveryFee);
+        platformIncome = -(
+          r2(refurb + storageFee + deliveryFee) -
+          rsBuyerCharges -
+          rsThirdPartyComp +
+          rsPlatformCosts
+        );
       } else {
         const commission = Math.round(deal * rate * 100) / 100;
         add(
@@ -199,7 +322,7 @@ export class SettlementController {
           Math.round((deal - commission - refurb - storageFee - sellerBorne) * 100) / 100,
         );
         platformIncome =
-          Math.round((commission + deliveryFee - platformBorne) * 100) / 100;
+          r2(commission + deliveryFee - platformBorne) + rsDelta;
       }
 
       resolved.forEach((t) => {
@@ -214,6 +337,8 @@ export class SettlementController {
           t.id,
         );
       });
+
+      rsEntries.forEach((e) => add(e.type, e.amount, e.source, e.ref));
 
       add(
         'SELLER_PAYOUT',
@@ -261,6 +386,8 @@ export class SettlementController {
       Appraisal,
       Ticket,
       Consignment,
+      DeliveryReschedule,
+      DeliveryReschedulePlan,
     ]),
   ],
   controllers: [SettlementController],

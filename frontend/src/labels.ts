@@ -37,6 +37,7 @@ export const ORDER_STATUS: Record<string, { label: string; cls: string }> = {
   CREATED: { label: '待排班', cls: 'amber' },
   DELIVERY_SCHEDULED: { label: '已预约配送', cls: 'cyan' },
   IN_DELIVERY: { label: '配送中', cls: 'blue' },
+  RESCHEDULING: { label: '配送改约中', cls: 'amber' },
   DELIVERED: { label: '已送达', cls: 'purple' },
   SETTLED: { label: '已结算', cls: 'green' },
   CANCELLED: { label: '已取消', cls: 'gray' },
@@ -136,5 +137,49 @@ export const SETTLEMENT_TYPE: Record<string, string> = {
   STORAGE_FEE: '仓储费',
   DELIVERY_FEE: '配送费',
   COMPENSATION: '售后赔付/退款',
+  RESCHEDULE_FEE: '配送改约费用',
+  THIRD_PARTY_COMPENSATION: '第三方赔付',
   SELLER_PAYOUT: '卖家应得',
+};
+
+export const RESCHEDULE_STATUS: Record<string, { label: string; cls: string }> = {
+  BLOCKED: { label: '待选方案', cls: 'red' },
+  IN_PROGRESS: { label: '方案执行中', cls: 'amber' },
+  AWAITING_HOIST_CONFIRM: { label: '待吊装确认', cls: 'amber' },
+  HOISTING: { label: '吊装作业中', cls: 'cyan' },
+  RESCHEDULED: { label: '待二次配送', cls: 'cyan' },
+  REDELIVERING: { label: '二次配送中', cls: 'blue' },
+  RETURNED_TO_WAREHOUSE: { label: '已回库待复检', cls: 'purple' },
+  RELISTED: { label: '已二次上架', cls: 'green' },
+  COMPLETED: { label: '改约完成', cls: 'green' },
+  CANCELLED: { label: '已取消', cls: 'gray' },
+};
+
+export const RESCHEDULE_PLAN: Record<string, string> = {
+  DISASSEMBLY: '拆装上楼',
+  HOISTING: '吊装上楼',
+  RETURN: '退货回库',
+  CHANGE_ADDRESS: '改送其他地址',
+};
+
+export const PLAN_STATUS: Record<string, { label: string; cls: string }> = {
+  PENDING: { label: '待执行', cls: 'amber' },
+  CONFIRMED: { label: '已确认', cls: 'cyan' },
+  EXECUTING: { label: '执行中', cls: 'blue' },
+  SUCCESS: { label: '成功', cls: 'green' },
+  FAILED: { label: '失败', cls: 'red' },
+  ABANDONED: { label: '已放弃', cls: 'gray' },
+};
+
+export const DISASSEMBLY_FEASIBILITY: Record<string, string> = {
+  DISASSEMBLABLE: '可拆装',
+  PARTIAL: '仅部分可拆',
+  NOT_DISASSEMBLABLE: '不可拆装',
+  UNKNOWN: '未判定',
+};
+
+export const HOIST_LIABILITY: Record<string, string> = {
+  BUYER_ENVIRONMENT: '买家环境限制',
+  PLAN_MISJUDGMENT: '配送方案误判',
+  THIRD_PARTY: '第三方（吊装公司）责任',
 };

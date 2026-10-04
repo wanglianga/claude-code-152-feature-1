@@ -13,8 +13,10 @@ import {
  * COMMISSION 平台佣金（从卖家应得中扣除，平台收入）
  * REFURBISH_FEE 清洁翻新费（平台代付，从卖家应得扣除）
  * STORAGE_FEE 仓储费（按天计，从卖家应得扣除）
- * DELIVERY_FEE 配送费（买家支付，结算给配送团队/平台）
+ * DELIVERY_FEE 配送费（买家支付，结算给配送团队/平台；退货时含回程运费）
  * COMPENSATION 售后赔付（责任方承担，来源工单）
+ * RESCHEDULE_FEE 配送改约费用（拆装人力/吊装/二次配送，买家承担为正；方案误判平台吸收为负）
+ * THIRD_PARTY_COMPENSATION 第三方赔付（吊装公司认赔，平台收入冲抵损失）
  * SELLER_PAYOUT 卖家最终应得（负数=付出）
  */
 export type SettlementEntryType =
@@ -24,6 +26,8 @@ export type SettlementEntryType =
   | 'STORAGE_FEE'
   | 'DELIVERY_FEE'
   | 'COMPENSATION'
+  | 'RESCHEDULE_FEE'
+  | 'THIRD_PARTY_COMPENSATION'
   | 'SELLER_PAYOUT';
 
 @Entity('settlements')
@@ -63,7 +67,7 @@ export class SettlementEntry {
   @Column({ type: 'uuid' })
   settlementId: string;
 
-  @Column({ type: 'varchar', length: 20 })
+  @Column({ type: 'varchar', length: 32 })
   type: SettlementEntryType;
 
   /** 金额（对平台账目视角：正=收入，SELLER_PAYOUT 为负=付出） */

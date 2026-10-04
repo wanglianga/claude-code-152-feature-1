@@ -12,6 +12,10 @@ import { Order } from '../entities/order.entity';
 import { Delivery } from '../entities/delivery.entity';
 import { Ticket, TicketMessage } from '../entities/ticket.entity';
 import { Settlement, SettlementEntry } from '../entities/settlement.entity';
+import {
+  DeliveryReschedule,
+  DeliveryReschedulePlan,
+} from '../entities/delivery-reschedule.entity';
 
 const hash = (p: string) => bcrypt.hashSync(p, 10);
 const daysAgo = (d: number) => new Date(Date.now() - d * 86400000);
@@ -345,6 +349,115 @@ export class SeederService {
       }),
     );
 
+    // ---------- 样例 6：三人位沙发到场进不了电梯，配送改约进行中（等买家选方案） ----------
+    const sofa3 = await m.save(
+      m.create(Consignment, {
+        code: 'CN202600008', sellerId: byName['wangjiayi'].id,
+        category: 'SOFA', brand: '芝华仕 CHEERS', sizeText: '230x100x88 cm',
+        material: '科技布+功能钢架', yearsUsed: 2, defectPhotos: [],
+        disassemblable: true, floor: 3, elevator: 'ELEVATOR',
+        expectedPrice: '1500.00', acceptRefurbish: true,
+        address: '仓储 A 区', status: 'LISTED', verificationLevel: 'NORMAL',
+      }),
+    );
+    await m.save(
+      m.create(Appraisal, {
+        consignmentId: sofa3.id, appraiserId: byName['gujia'].id,
+        structuralScore: 1, stainScore: 1, odorScore: 1, mothScore: 1, warpScore: 1,
+        moveDifficulty: 4, consignmentPrice: '1280.00', minDealPrice: '1000.00',
+        commissionRate: '0.1500', estimatedRefurbishCost: '80.00',
+        cleaningAdvice: '常规清洁', refurbishSuggestions: '无', matchResult: 'MATCH',
+      }),
+    );
+    const item3 = await m.save(
+      m.create(Item, {
+        consignmentId: sofa3.id, category: 'SOFA',
+        title: '芝华仕三人位功能沙发（可拆装）',
+        description: '科技布面料，功能位正常。最小通道要求：电梯进深 ≥1.6m；可拆扶手。',
+        status: 'SOLD', location: 'WAREHOUSE', warehouseSlot: 'A-02-07',
+        deliveryRadiusKm: 30, listedPrice: '1280.00', minDealPrice: '1000.00',
+        cleaningCost: '40.00', refurbishCost: '0.00',
+        enteredWarehouseAt: daysAgo(8), listedAt: daysAgo(5),
+      }),
+    );
+    const order3 = await m.save(
+      m.create(Order, {
+        code: 'OD2026000003', itemId: item3.id, consignmentId: sofa3.id,
+        buyerId: byName['zhangmai'].id, sellerId: byName['wangjiayi'].id,
+        dealPrice: '1280.00', deliveryFee: '60.00',
+        buyerAddress: '锦绣家园 5 栋 1202', buyerFloor: 12, buyerElevator: 'ELEVATOR',
+        needOldFurnitureRemoval: false, status: 'RESCHEDULING',
+        deliveryNote: '到场发现电梯进深不足', createdAt: daysAgo(1),
+      }),
+    );
+    const delivery3 = await m.save(
+      m.create(Delivery, {
+        orderId: order3.id, teamId: byName['peisong'].id,
+        vehicleType: 'MID_TRUCK', needsDisassembly: true,
+        pickupFloor: 1, pickupElevator: 'ELEVATOR',
+        dropoffFloor: 12, dropoffElevator: 'ELEVATOR',
+        scheduledWindow: '2026-10-03 下午', status: 'FAILED',
+        failReason: 'ELEVATOR_TOO_SMALL',
+        failNote: '电梯进深 1.5m、沙发最大边 2.3m；楼梯转角约 1.2m 无法整抬｜现场测量：电梯进深 1.50m、门宽 0.90m、楼梯转角 1.20m、家具最大边 2.30m',
+        createdAt: daysAgo(1),
+      }),
+    );
+    const rs3 = await m.save(
+      m.create(DeliveryReschedule, {
+        orderId: order3.id, deliveryId: delivery3.id, itemId: item3.id,
+        consignmentId: sofa3.id, reportedBy: byName['peisong'].id,
+        status: 'BLOCKED', currentPlan: '',
+        sitePhotos: ['seed://site/elevator-tape.jpg', 'seed://site/stair-corner.jpg', 'seed://site/sofa-van.jpg'],
+        siteFloor: 12, elevatorDepth: '1.50', elevatorDoorWidth: '0.90',
+        stairLandingWidth: '1.20', furnitureMaxSide: '2.30',
+        disassemblyFeasibility: 'DISASSEMBLABLE', laborSurcharge: '120.00',
+        siteNote: '拆扶手后预计可进梯，需加 1 人；买家楼层高也可评估吊装。',
+      }),
+    );
+    const ticket3 = await m.save(
+      m.create(Ticket, {
+        consignmentId: sofa3.id, itemId: item3.id, orderId: order3.id,
+        type: 'ELEVATOR_BLOCK', createdBy: byName['peisong'].id, creatorRole: 'DELIVERY',
+        status: 'OPEN', resolution: 'PENDING', liableParty: 'SHARED',
+        compensationAmount: '0',
+        title: '家具进不了电梯/楼道，已发起配送改约',
+        description:
+          '配送员现场登记：楼层 12，电梯进深 1.50m、门宽 0.90m，楼梯转角 1.20m，家具最大边 2.30m；' +
+          '拆装可能性：DISASSEMBLABLE；现场人工加价 ¥120.00。\n' +
+          '现场说明：拆扶手后预计可进梯，需加 1 人；买家楼层高也可评估吊装。\n' +
+          '买家可在「我的订单 → 配送改约」选择：拆装上楼 / 吊装 / 退货 / 改送其他地址。',
+        createdAt: daysAgo(1),
+      }),
+    );
+    await m.save(TicketMessage, [
+      m.create(TicketMessage, { ticketId: ticket3.id, authorId: byName['peisong'].id, authorRole: 'DELIVERY', authorName: '配送队长小马', content: '已登记现场照片与测量数据并发起配送改约，等待买家选择方案。吊装方案需补充吊装公司、物业许可、天气与保险确认。', createdAt: daysAgo(1) }),
+    ]);
+    void rs3;
+
+    // ---------- 样例 7：孙先生退货单的改约已回库（仓库可演示二次上架） ----------
+    const rs2 = await m.save(
+      m.create(DeliveryReschedule, {
+        orderId: order2.id, deliveryId: (await m.findOne(Delivery, { where: { orderId: order2.id } }))!.id,
+        itemId: item2.id, consignmentId: sofa2.id, reportedBy: byName['peisong'].id,
+        status: 'RETURNED_TO_WAREHOUSE', currentPlan: 'RETURN',
+        sitePhotos: ['seed://site/order2-elevator.jpg'],
+        siteFloor: 9, elevatorDepth: '1.40', elevatorDoorWidth: '0.85',
+        stairLandingWidth: '1.10', furnitureMaxSide: '2.40',
+        disassemblyFeasibility: 'NOT_DISASSEMBLABLE', laborSurcharge: '150.00',
+        siteNote: '不可拆装，立放、吊绳均不可行，买家选择退货。',
+        returnFreight: '80.00', restockingFee: '40.00',
+        returnWarehouseSlot: 'A-05-01', returnedAt: daysAgo(3),
+        createdAt: daysAgo(5),
+      }),
+    );
+    await m.save(
+      m.create(DeliveryReschedulePlan, {
+        rescheduleId: rs2.id, chosenBy: byName['sunmai'].id, chosenByRole: 'BUYER',
+        plan: 'RETURN', status: 'SUCCESS', quotedFee: '0.00',
+        note: '现场确认无法上楼，买家选择退货', createdAt: daysAgo(4),
+      }),
+    );
+
     // eslint-disable-next-line no-console
     console.log('[seed] 演示数据已写入');
   }
@@ -355,6 +468,7 @@ export class SeederService {
     TypeOrmModule.forFeature([
       User, SellerProfile, Consignment, Appraisal, Item, ItemWorkLog,
       Order, Delivery, Ticket, TicketMessage, Settlement, SettlementEntry,
+      DeliveryReschedule, DeliveryReschedulePlan,
     ]),
   ],
   providers: [SeederService],

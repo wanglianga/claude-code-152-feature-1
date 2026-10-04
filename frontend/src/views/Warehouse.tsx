@@ -3,8 +3,9 @@ import { api, AuthUser } from '../api';
 import {
   Badge, Modal, Field, Money, Empty, toast,
 } from '../ui';
-import { CATEGORY, ITEM_STATUS, WORK_LOG_TYPE } from '../labels';
+import { CATEGORY, ITEM_STATUS, WORK_LOG_TYPE, RESCHEDULE_STATUS } from '../labels';
 import { ConsignmentDetail } from './ConsignmentDetail';
+import { ReschedulePage } from './Reschedule';
 
 const FILTERS = ['PREPARING', 'PHOTOGRAPHY', 'LISTED', 'RESERVED', 'RETURNED'] as const;
 
@@ -14,14 +15,22 @@ export function WarehouseView({ user }: { user: AuthUser }) {
   const [workFor, setWorkFor] = useState<any>(null);
   const [advanceFor, setAdvanceFor] = useState<any>(null);
   const [detailConsignment, setDetailConsignment] = useState<string | null>(null);
+  const [pendingReturns, setPendingReturns] = useState<any[]>([]);
+  const [openReschedule, setOpenReschedule] = useState<string | null>(null);
 
   const load = () => {
     api(`/items?status=${filter}`).then(setItems);
+    api('/reschedules').then((rs: any[]) =>
+      setPendingReturns(rs.filter((r) => ['IN_PROGRESS', 'RETURNED_TO_WAREHOUSE'].includes(r.status) && (r.currentPlan === 'RETURN' || r.status === 'RETURNED_TO_WAREHOUSE'))),
+    ).catch(() => {});
   };
   useEffect(() => {
     load();
   }, [filter]);
 
+  if (openReschedule) {
+    return <ReschedulePage id={openReschedule} onBack={() => { setOpenReschedule(null); load(); }} />;
+  }
   if (detailConsignment) {
     return <ConsignmentDetail id={detailConsignment} onBack={() => setDetailConsignment(null)} viewerRole={user.role} />;
   }
@@ -45,6 +54,34 @@ export function WarehouseView({ user }: { user: AuthUser }) {
           </button>
         ))}
       </div>
+      {pendingReturns.length > 0 && (
+        <div className="card" style={{ marginBottom: 12, borderColor: '#f59e0b' }}>
+          <h3>配送改约 · 退货回库待办</h3>
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr><th>改约单</th><th>状态</th><th>回库库位</th><th>回程运费</th><th>回库费</th><th>操作</th></tr>
+              </thead>
+              <tbody>
+                {pendingReturns.map((r) => (
+                  <tr key={r.id}>
+                    <td className="muted">{r.siteNote?.slice(0, 24) || '电梯受阻退货'}</td>
+                    <td><Badge map={RESCHEDULE_STATUS} value={r.status} /></td>
+                    <td>{r.returnWarehouseSlot || '待登记'}</td>
+                    <td><Money v={r.returnFreight} /></td>
+                    <td><Money v={r.restockingFee} /></td>
+                    <td>
+                      <button className="btn sm" onClick={() => setOpenReschedule(r.id)}>
+                        {r.status === 'RETURNED_TO_WAREHOUSE' ? '复检/二次上架' : '回库登记'}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
       {items.length === 0 ? (
         <Empty text="该状态下暂无商品" />
       ) : (

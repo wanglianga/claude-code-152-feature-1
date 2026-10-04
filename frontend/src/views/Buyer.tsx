@@ -5,6 +5,7 @@ import {
 } from '../ui';
 import { CATEGORY, ITEM_STATUS, ORDER_STATUS, TICKET_TYPE, TICKET_STATUS } from '../labels';
 import { TicketDetail } from './TicketDetail';
+import { ReschedulePage } from './Reschedule';
 
 const EMOJI: Record<string, string> = {
   SOFA: '🛋️', DINING_TABLE: '🍽️', KIDS_BED: '🛏️',
@@ -186,15 +187,23 @@ function MyOrders() {
   const [orders, setOrders] = useState<any[]>([]);
   const [ticketFor, setTicketFor] = useState<any>(null);
   const [ticketId, setTicketId] = useState<string | null>(null);
+  const [rescheduleOrderId, setRescheduleOrderId] = useState<string | null>(null);
+  const [rsMap, setRsMap] = useState<Record<string, any>>({});
 
   const load = () => {
     api('/orders').then(setOrders);
+    api('/reschedules')
+      .then((rs: any[]) => setRsMap(Object.fromEntries(rs.map((r) => [r.orderId, r]))))
+      .catch(() => {});
   };
   useEffect(() => {
     load();
   }, []);
 
   if (ticketId) return <TicketDetail id={ticketId} onBack={() => { setTicketId(null); load(); }} />;
+  if (rescheduleOrderId) {
+    return <ReschedulePage id={rescheduleOrderId} onBack={() => { setRescheduleOrderId(null); load(); }} />;
+  }
 
   return (
     <div>
@@ -222,6 +231,11 @@ function MyOrders() {
                 <dt>旧家具搬出</dt><dd>{o.needOldFurnitureRemoval ? '是' : '否'}</dd>
               </dl>
               <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                {rsMap[o.id] && rsMap[o.id].status !== 'CANCELLED' && (
+                  <button className="btn sm" onClick={() => setRescheduleOrderId(o.id)}>
+                    配送改约
+                  </button>
+                )}
                 {['DELIVERED', 'IN_DELIVERY', 'DELIVERY_SCHEDULED'].includes(o.status) && (
                   <button className="btn ghost sm" onClick={() => setTicketFor(o)}>发起售后/异常工单</button>
                 )}

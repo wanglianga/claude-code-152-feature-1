@@ -15,6 +15,10 @@ import { InjectDataSource } from '@nestjs/typeorm';
 import { Delivery } from '../entities/delivery.entity';
 import { Order } from '../entities/order.entity';
 import { Item } from '../entities/item.entity';
+import {
+  DeliveryReschedule,
+  DeliveryReschedulePlan,
+} from '../entities/delivery-reschedule.entity';
 import { JwtAuthGuard } from '../auth/jwt.guard';
 import { RolesGuard, Roles } from '../auth/roles.guard';
 
@@ -41,10 +45,25 @@ export class DeliveryController {
   @Roles('DELIVERY', 'OPS', 'CS')
   @Get('queue')
   async queue() {
-    return this.ds.getRepository(Delivery).find({
-      where: [{ status: 'PENDING' as any }, { status: 'SCHEDULED' as any }, { status: 'FAILED' as any }],
-      order: { createdAt: 'DESC' },
-    });
+    // 常规待办（PENDING/SCHEDULED/FAILED）+ 改约中的任务 +
+    // 已送达且有已完结改约单（可能在新地址再次受阻）的任务；已结算/退货/取消不出现
+    return this.ds.getRepository(Delivery)
+      .createQueryBuilder('d')
+      .innerJoin(Order, 'o', 'o.id = d."orderId"')
+      .leftJoin(
+        DeliveryReschedule,
+        'r',
+        'r."orderId" = d."orderId" AND r.status = :completed',
+        { completed: 'COMPLETED' },
+      )
+      .where('(d.status IN (:...sts) OR o.status = :rs OR (d.status = :done AND o.status = :delivered AND r.id IS NOT NULL))', {
+        sts: ['PENDING', 'SCHEDULED', 'FAILED'],
+        rs: 'RESCHEDULING',
+        done: 'DONE',
+        delivered: 'DELIVERED',
+      })
+      .orderBy('d."createdAt"', 'DESC')
+      .getMany();
   }
 
   @Roles('DELIVERY', 'OPS')
@@ -59,6 +78,13 @@ export class DeliveryController {
       const order = await m.findOne(Order, { where: { id: orderId } });
       if (!order || ['CANCELLED', 'RETURNED', 'SETTLED'].includes(order.status)) {
         throw new BadRequestException('订单状态不允许排班配送');
+      }
+      const activeRs = await m.findOne(DeliveryReschedule, { where: { orderId } });
+      if (
+        activeRs &&
+        !['COMPLETED', 'CANCELLED', 'RELISTED'].includes(activeRs.status)
+      ) {
+        throw new BadRequestException('该订单在配送改约流程中，请在「配送改约」中按方案处理');
       }
       delivery.teamId = dto.teamId || delivery.teamId;
       delivery.vehicleType = dto.vehicleType || delivery.vehicleType;
@@ -113,6 +139,21 @@ export class DeliveryController {
         item.status = 'DELIVERED';
         await m.save(item);
       }
+      // 改地址二次配送正常送达：改约单收尾
+      const rs = await m.findOne(DeliveryReschedule, {
+        where: { orderId, status: 'REDELIVERING' },
+      });
+      if (rs) {
+        rs.status = 'COMPLETED';
+        await m.save(rs);
+        const plan = await m.findOne(DeliveryReschedulePlan, {
+          where: { rescheduleId: rs.id, plan: 'CHANGE_ADDRESS', status: 'EXECUTING' },
+        });
+        if (plan) {
+          plan.status = 'SUCCESS';
+          await m.save(plan);
+        }
+      }
       await m.save([delivery, order!]);
       return { delivery, order };
     });
@@ -146,7 +187,15 @@ export class DeliveryController {
 }
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Delivery, Order, Item])],
+  imports: [
+    TypeOrmModule.forFeature([
+      Delivery,
+      Order,
+      Item,
+      DeliveryReschedule,
+      DeliveryReschedulePlan,
+    ]),
+  ],
   controllers: [DeliveryController],
 })
 export class DeliveryModule {}

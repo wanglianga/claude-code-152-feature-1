@@ -9,13 +9,15 @@ import {
 /**
  * 订单状态：
  * CREATED 已下单待支付/待安排 / DELIVERY_SCHEDULED 已预约配送 /
- * IN_DELIVERY 配送中 / DELIVERED 已送达 / SETTLED 已结算 /
+ * IN_DELIVERY 配送中 / RESCHEDULING 到场受阻、配送改约中 /
+ * DELIVERED 已送达 / SETTLED 已结算 /
  * CANCELLED 取消 / RETURNING 退货中 / RETURNED 已退货
  */
 export type OrderStatus =
   | 'CREATED'
   | 'DELIVERY_SCHEDULED'
   | 'IN_DELIVERY'
+  | 'RESCHEDULING'
   | 'DELIVERED'
   | 'SETTLED'
   | 'CANCELLED'
