@@ -8,6 +8,7 @@ import { BuyerView } from './views/Buyer';
 import { AppraiserView } from './views/Appraiser';
 import { WarehouseView } from './views/Warehouse';
 import { DeliveryView } from './views/Delivery';
+import { BlockListView } from './views/DeliveryBlock';
 import { CsView } from './views/Cs';
 import { OpsView } from './views/Ops';
 
@@ -25,6 +26,7 @@ const TABS: TabDef[] = [
   { key: 'appraisal', label: '上门估价', roles: ['APPRAISER'], render: () => <AppraiserView /> },
   { key: 'warehouse', label: '翻新上架', roles: ['WAREHOUSE', 'REFURBISHER'], render: (u) => <WarehouseView user={u} /> },
   { key: 'delivery', label: '配送调度', roles: ['DELIVERY'], render: () => <DeliveryView /> },
+  { key: 'delivery-blocks', label: '配送改约', roles: ['CS', 'OPS', 'ADMIN'], render: () => <BlockListView /> },
   { key: 'tickets', label: '协同工单', roles: ['CS', 'ADMIN'], render: () => <CsView mode="tickets" /> },
   { key: 'settlements', label: '结算单', roles: ['CS', 'OPS', 'ADMIN'], render: () => <CsView mode="settlements" /> },
   { key: 'analytics', label: '运营分析', roles: ['OPS', 'ADMIN'], render: () => <OpsView /> },

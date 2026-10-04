@@ -5,7 +5,9 @@ import {
 } from '../ui';
 import {
   TICKET_TYPE, TICKET_STATUS, ROLE, ROLE_COLOR, RESOLUTION, CATEGORY,
+  BLOCK_STATUS, BLOCK_OPTION, HOIST_STATUS, HOIST_FAIL_CAUSE,
 } from '../labels';
+import { BlockDetail } from './DeliveryBlock';
 
 export function TicketDetail({ id, onBack }: { id: string; onBack: () => void }) {
   const me = getUser()!;
@@ -13,14 +15,18 @@ export function TicketDetail({ id, onBack }: { id: string; onBack: () => void })
   const [content, setContent] = useState('');
   const [showResolve, setShowResolve] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [openBlockId, setOpenBlockId] = useState<string | null>(null);
 
   const load = () => api(`/tickets/${id}`).then(setData);
   useEffect(() => {
     load();
   }, [id]);
 
+  if (openBlockId) {
+    return <BlockDetail id={openBlockId} onBack={() => { setOpenBlockId(null); load(); }} />;
+  }
   if (!data) return <div className="empty">加载中…</div>;
-  const { ticket, messages, consignment, item, order, delivery } = data;
+  const { ticket, messages, consignment, item, order, delivery, block } = data;
   const isCs = ['CS', 'OPS', 'ADMIN'].includes(me.role);
 
   const send = async () => {
@@ -108,6 +114,45 @@ export function TicketDetail({ id, onBack }: { id: string; onBack: () => void })
           <button className="btn" disabled={busy} onClick={send}>发送</button>
         </div>
       </div>
+
+      {block && (
+        <div className="card" style={{ marginTop: 14 }}>
+          <h3>
+            配送改约单 {block.code}
+            <span style={{ marginLeft: 8 }}><Badge map={BLOCK_STATUS} value={block.status} /></span>
+            {block.buyerOption && <span className="badge blue" style={{ marginLeft: 6 }}>{BLOCK_OPTION[block.buyerOption]}</span>}
+            {block.hoistStatus !== 'NONE' && <span style={{ marginLeft: 6 }}><Badge map={HOIST_STATUS} value={block.hoistStatus} /></span>}
+            {block.hoistFailCause && <span style={{ marginLeft: 6 }}><Badge map={HOIST_FAIL_CAUSE} value={block.hoistFailCause} /></span>}
+            <button className="btn sm" style={{ float: 'right' }} onClick={() => setOpenBlockId(block.id)}>进入改约单处理</button>
+          </h3>
+          <dl className="kv">
+            <dt>现场勘测</dt>
+            <dd>
+              {block.siteFloor} 层 · 电梯进深 {block.elevatorDepthCm ?? '-'}cm（开门 {block.elevatorDoorCm ?? '-'}cm）
+              · 楼梯转角 {block.stairTurnWidthCm ?? '-'}cm · {block.disassemblable ? '可拆装' : '不可拆装'}
+              · 人工加价 <Money v={block.laborSurcharge} />
+            </dd>
+            <dt>方案附加费</dt><dd><Money v={block.optionFee} />（原配送费 <Money v={order?.deliveryFee} /> 之外）</dd>
+            {block.buyerOption === 'HOIST' && block.hoistCompany && (
+              <>
+                <dt>吊装信息</dt>
+                <dd>
+                  {block.hoistCompany} · 物业{block.propertyPermit ? '已许可' : '未许可'} ·
+                  天气「{block.weather}」· 保险{block.insuranceConfirmed ? '已确认' : '未确认'} ·
+                  吊装费 <Money v={block.hoistQuote} />
+                  {Number(block.thirdPartyClaimAmount) > 0 && <> · 第三方追偿 <Money v={block.thirdPartyClaimAmount} className="money-in" /></>}
+                </dd>
+              </>
+            )}
+            {block.buyerOption === 'RETURN' && (
+              <>
+                <dt>回库/二次上架</dt>
+                <dd>{block.warehouseSlot || '尚未回仓'} · {block.status === 'RELISTED' ? '已二次上架' : block.status === 'CLOSED' ? '不再上架' : '待处理'}</dd>
+              </>
+            )}
+          </dl>
+        </div>
+      )}
 
       {showResolve && (
         <ResolveModal

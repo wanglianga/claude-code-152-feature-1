@@ -14,7 +14,9 @@ import {
  * REFURBISH_FEE 清洁翻新费（平台代付，从卖家应得扣除）
  * STORAGE_FEE 仓储费（按天计，从卖家应得扣除）
  * DELIVERY_FEE 配送费（买家支付，结算给配送团队/平台）
+ * RESCHEDULE_FEE 改约附加费（拆装上楼/吊装/改址转运，买家支付）
  * COMPENSATION 售后赔付（责任方承担，来源工单）
+ * THIRD_PARTY_CLAIM 第三方追偿（吊装公司责任，平台向其追偿，冲抵平台支出）
  * SELLER_PAYOUT 卖家最终应得（负数=付出）
  */
 export type SettlementEntryType =
@@ -23,7 +25,9 @@ export type SettlementEntryType =
   | 'REFURBISH_FEE'
   | 'STORAGE_FEE'
   | 'DELIVERY_FEE'
+  | 'RESCHEDULE_FEE'
   | 'COMPENSATION'
+  | 'THIRD_PARTY_CLAIM'
   | 'SELLER_PAYOUT';
 
 @Entity('settlements')

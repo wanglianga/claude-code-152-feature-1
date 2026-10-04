@@ -1,15 +1,19 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api';
 import { Money, Empty } from '../ui';
-import { TICKET_TYPE, FAIL_REASON } from '../labels';
+import {
+  TICKET_TYPE, FAIL_REASON, BLOCK_OPTION, HOIST_FAIL_CAUSE, CATEGORY,
+} from '../labels';
 
 export function OpsView() {
   const [data, setData] = useState<any>(null);
   const [profiles, setProfiles] = useState<any[]>([]);
+  const [blocks, setBlocks] = useState<any>(null);
 
   useEffect(() => {
     api('/analytics/by-category').then(setData);
     api('/analytics/seller-profiles').then(setProfiles);
+    api('/analytics/delivery-blocks').then(setBlocks).catch(() => setBlocks(null));
   }, []);
 
   if (!data) return <div className="empty">加载中…</div>;
@@ -89,6 +93,8 @@ export function OpsView() {
         </div>
       </div>
 
+      {blocks && blocks.total > 0 && <DeliveryBlockBoard data={blocks} />}
+
       <div className="section-title">卖家风险画像（再次寄卖验真依据）</div>
       <div className="card" style={{ padding: 0 }}>
         <div className="table-wrap">
@@ -127,5 +133,81 @@ export function OpsView() {
         风险分 = 反悔次数×3 + 描述不符×2 + 售后争议×1 − 成交数×0.5；≥4 分或描述不符 ≥2 次，新寄卖自动进入严格上门验真。
       </div>
     </div>
+  );
+}
+
+function DeliveryBlockBoard({ data }: { data: any }) {
+  return (
+    <>
+      <div className="section-title">大件进不了电梯 · 配送改约看板</div>
+      <div className="grid grid-4" style={{ marginBottom: 14 }}>
+        <div className="card stat">
+          <div className="l">累计受阻改约</div>
+          <div className="v">{data.total}</div>
+          <div className="d">买家四方案见下</div>
+        </div>
+        <div className="card stat">
+          <div className="l">吊装成功 / 失败</div>
+          <div className="v">{data.hoistSuccess} / {data.hoistFailed}</div>
+          <div className="d">成功率 {data.hoistSuccessRatePct}%（共安排 {data.hoistChosen}）</div>
+        </div>
+        <div className="card stat">
+          <div className="l">退货回库 / 二次上架</div>
+          <div className="v">{data.returnCount} / {data.returnRelistCount}</div>
+          <div className="d">回库后二次上架率 {data.relistRatePct}%</div>
+        </div>
+        <div className="card stat">
+          <div className="l">改约附加费 / 第三方追偿</div>
+          <div className="v" style={{ fontSize: 22 }}>
+            <Money v={data.deliveredSurchargeTotal} />
+          </div>
+          <div className="d">已送达单附加费；追偿 <Money v={data.thirdPartyClaimTotal} /></div>
+        </div>
+      </div>
+      <div className="grid grid-2" style={{ marginBottom: 18 }}>
+        <div className="card">
+          <h3>买家方案分布</h3>
+          <table style={{ width: '100%' }}>
+            <tbody>
+              {['DISASSEMBLY', 'HOIST', 'RETURN', 'CHANGE_ADDRESS'].map((k) => (
+                <tr key={k}>
+                  <td style={{ width: 130 }}>{BLOCK_OPTION[k]}</td>
+                  <td>{data.byOption[k] || 0} 单</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <h3 style={{ marginTop: 12 }}>高发品类</h3>
+          <div>
+            {Object.entries(data.byCategory).map(([k, v]) => (
+              <span className="tag" key={k} style={{ marginRight: 6 }}>
+                {(CATEGORY as Record<string, string>)[k] || k} ×{String(v)}
+              </span>
+            ))}
+          </div>
+        </div>
+        <div className="card">
+          <h3>吊装失败责任归因</h3>
+          {Object.keys(data.hoistFailCauses).length === 0 ? (
+            <Empty text="暂无吊装失败" />
+          ) : (
+            <table style={{ width: '100%' }}>
+              <tbody>
+                {Object.entries(data.hoistFailCauses).map(([k, v]) => (
+                  <tr key={k}>
+                    <td style={{ width: 210 }}>{HOIST_FAIL_CAUSE[k]?.label || k}</td>
+                    <td>{String(v)} 次</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          <div className="hint" style={{ marginTop: 10 }}>
+            买家环境限制→吊装费买家承担（退货从退款扣除）；配送方案误判→平台承担；
+            第三方责任→平台垫付后向吊装公司追偿，计入结算「第三方追偿」。
+          </div>
+        </div>
+      </div>
+    </>
   );
 }

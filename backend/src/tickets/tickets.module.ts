@@ -18,6 +18,7 @@ import { Consignment } from '../entities/consignment.entity';
 import { Item } from '../entities/item.entity';
 import { Order } from '../entities/order.entity';
 import { Delivery } from '../entities/delivery.entity';
+import { DeliveryBlock } from '../entities/delivery-block.entity';
 import { JwtAuthGuard, JwtPayload } from '../auth/jwt.guard';
 import { RolesGuard, Roles } from '../auth/roles.guard';
 import { CurrentUser } from '../auth/current-user.decorator';
@@ -258,6 +259,9 @@ export class TicketController {
       const delivery = order
         ? await m.findOne(Delivery, { where: { orderId: order.id } })
         : null;
+      const block = ticket.blockId
+        ? await m.findOne(DeliveryBlock, { where: { id: ticket.blockId } })
+        : null;
 
       switch (dto.resolution) {
         case 'CANCEL_CONSIGNMENT':
@@ -282,7 +286,13 @@ export class TicketController {
                 : 'RETURNING';
             await m.save(order);
           }
-          if (item) {
+          // 该工单若挂在「配送改约单」上，退货回库/二次上架由改约单流程统一处理
+          if (block) {
+            block.buyerOption = 'RETURN';
+            block.optionFee = '0.00';
+            block.status = 'RETURN_DECIDED';
+            await m.save(block);
+          } else if (item) {
             item.status = 'RETURNED';
             await m.save(item);
           }
@@ -380,7 +390,10 @@ export class TicketController {
     const delivery = order
       ? await m.findOne(Delivery, { where: { orderId: order.id } })
       : null;
-    return { ticket, messages, consignment, item, order, delivery };
+    const block = ticket.blockId
+      ? await m.findOne(DeliveryBlock, { where: { id: ticket.blockId } })
+      : null;
+    return { ticket, messages, consignment, item, order, delivery, block };
   }
 }
 
@@ -393,6 +406,7 @@ export class TicketController {
       Item,
       Order,
       Delivery,
+      DeliveryBlock,
     ]),
   ],
   controllers: [TicketController],

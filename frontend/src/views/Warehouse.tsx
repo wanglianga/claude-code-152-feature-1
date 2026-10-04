@@ -5,10 +5,24 @@ import {
 } from '../ui';
 import { CATEGORY, ITEM_STATUS, WORK_LOG_TYPE } from '../labels';
 import { ConsignmentDetail } from './ConsignmentDetail';
+import { BlockListView } from './DeliveryBlock';
 
 const FILTERS = ['PREPARING', 'PHOTOGRAPHY', 'LISTED', 'RESERVED', 'RETURNED'] as const;
 
 export function WarehouseView({ user }: { user: AuthUser }) {
+  const [tab, setTab] = useState<'shelf' | 'blocks'>('shelf');
+  return (
+    <div>
+      <div className="pill-filter" style={{ marginBottom: 12 }}>
+        <button className={tab === 'shelf' ? 'active' : ''} onClick={() => setTab('shelf')}>清洁翻新 / 入库上架</button>
+        <button className={tab === 'blocks' ? 'active' : ''} onClick={() => setTab('blocks')}>大件退货回库 · 二次上架</button>
+      </div>
+      {tab === 'shelf' ? <Shelf user={user} /> : <BlockListView scope="warehouse" />}
+    </div>
+  );
+}
+
+function Shelf({ user }: { user: AuthUser }) {
   const [items, setItems] = useState<any[]>([]);
   const [filter, setFilter] = useState<string>('PREPARING');
   const [workFor, setWorkFor] = useState<any>(null);

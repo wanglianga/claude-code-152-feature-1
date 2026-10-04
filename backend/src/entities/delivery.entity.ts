@@ -8,7 +8,7 @@ import {
 
 /**
  * 配送任务状态：PENDING 待安排 / SCHEDULED 已排班 / LOADED 已装车 /
- * DONE 已完成 / FAILED 配送失败（进不了电梯/买家不在/磕碰退回）
+ * DONE 已完成 / FAILED 配送失败（进不了电梯/买家不在/磕碰退回/吊装失败）
  */
 export type DeliveryStatus =
   | 'PENDING'
@@ -21,6 +21,7 @@ export type DeliveryStatus =
 export type DeliveryFailReason =
   | 'ELEVATOR_TOO_SMALL' // 沙发进不了电梯
   | 'STAIR_TOO_NARROW'
+  | 'HOIST_FAILED' // 吊装失败（具体责任归因见配送改约单）
   | 'BUYER_ABSENT'
   | 'TRANSIT_DAMAGE' // 配送途中磕碰
   | 'VEHICLE_UNAVAILABLE'

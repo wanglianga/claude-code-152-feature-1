@@ -5,6 +5,7 @@ import {
 } from '../ui';
 import { CATEGORY, ITEM_STATUS, ORDER_STATUS, TICKET_TYPE, TICKET_STATUS } from '../labels';
 import { TicketDetail } from './TicketDetail';
+import { BlockDetail } from './DeliveryBlock';
 
 const EMOJI: Record<string, string> = {
   SOFA: '🛋️', DINING_TABLE: '🍽️', KIDS_BED: '🛏️',
@@ -184,16 +185,20 @@ function BuyModal({ item, onClose, onDone }: { item: any; onClose: () => void; o
 
 function MyOrders() {
   const [orders, setOrders] = useState<any[]>([]);
+  const [blocks, setBlocks] = useState<any[]>([]);
   const [ticketFor, setTicketFor] = useState<any>(null);
   const [ticketId, setTicketId] = useState<string | null>(null);
+  const [blockId, setBlockId] = useState<string | null>(null);
 
   const load = () => {
     api('/orders').then(setOrders);
+    api('/delivery-blocks').then(setBlocks).catch(() => setBlocks([]));
   };
   useEffect(() => {
     load();
   }, []);
 
+  if (blockId) return <BlockDetail id={blockId} onBack={() => { setBlockId(null); load(); }} />;
   if (ticketId) return <TicketDetail id={ticketId} onBack={() => { setTicketId(null); load(); }} />;
 
   return (
@@ -208,20 +213,37 @@ function MyOrders() {
         <Empty text="还没有订单" />
       ) : (
         <div className="grid">
-          {orders.map((o) => (
+          {orders.map((o) => {
+            const block = blocks.find((b) => b.orderId === o.id);
+            const blockOpen = block && !['DELIVERED', 'RELISTED', 'CLOSED'].includes(block.status);
+            return (
             <div className="card" key={o.id}>
               <h3>
                 {o.code}
                 <span style={{ marginLeft: 8 }}><Badge map={ORDER_STATUS} value={o.status} /></span>
                 <span style={{ float: 'right' }}><Money v={o.dealPrice} className="price" /></span>
               </h3>
+              {block && (
+                <div className={`banner ${blockOpen ? 'warn' : 'info'}`} style={{ margin: '6px 0' }}>
+                  大件到楼无法上楼：
+                  {block.buyerOption
+                    ? `当前方案「${({ DISASSEMBLY: '拆装上楼', HOIST: '吊装上楼', RETURN: '退货', CHANGE_ADDRESS: '改送其他地址' } as any)[block.buyerOption]}」`
+                    : '配送员已现场勘测，请选择处理方案'}
+                  {Number(o.surchargeFee) > 0 && <> · 附加费 <Money v={o.surchargeFee} /></>}
+                </div>
+              )}
               <dl className="kv">
-                <dt>配送费</dt><dd><Money v={o.deliveryFee} /></dd>
+                <dt>配送费</dt><dd><Money v={o.deliveryFee} />{Number(o.surchargeFee) > 0 && <> + 改约附加 <Money v={o.surchargeFee} /></>}</dd>
                 <dt>预约时间</dt><dd>{o.appointmentWindow || '待排班'}</dd>
                 <dt>地址</dt><dd>{o.buyerAddress}（{o.buyerFloor} 层）</dd>
                 <dt>旧家具搬出</dt><dd>{o.needOldFurnitureRemoval ? '是' : '否'}</dd>
               </dl>
-              <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+              <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
+                {block && (
+                  <button className="btn sm" onClick={() => setBlockId(block.id)}>
+                    {blockOpen ? '处理配送改约' : '查看改约单'}
+                  </button>
+                )}
                 {['DELIVERED', 'IN_DELIVERY', 'DELIVERY_SCHEDULED'].includes(o.status) && (
                   <button className="btn ghost sm" onClick={() => setTicketFor(o)}>发起售后/异常工单</button>
                 )}
@@ -247,7 +269,8 @@ function MyOrders() {
                 )}
               </div>
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
       {ticketFor && <CreateTicketModal order={ticketFor} onClose={() => setTicketFor(null)} onCreated={(id: string) => { setTicketFor(null); setTicketId(id); }} />}

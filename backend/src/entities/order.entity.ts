@@ -10,7 +10,8 @@ import {
  * 订单状态：
  * CREATED 已下单待支付/待安排 / DELIVERY_SCHEDULED 已预约配送 /
  * IN_DELIVERY 配送中 / DELIVERED 已送达 / SETTLED 已结算 /
- * CANCELLED 取消 / RETURNING 退货中 / RETURNED 已退货
+ * CANCELLED 取消 / RETURNING 退货中 / RETURNED 已退货 /
+ * RESHEDULING 大件受阻，配送改约处理中（拆装/吊装/改址/退货协商）
  */
 export type OrderStatus =
   | 'CREATED'
@@ -20,7 +21,8 @@ export type OrderStatus =
   | 'SETTLED'
   | 'CANCELLED'
   | 'RETURNING'
-  | 'RETURNED';
+  | 'RETURNED'
+  | 'RESHEDULING';
 
 @Entity('orders')
 export class Order {
@@ -53,8 +55,19 @@ export class Order {
   @Column({ type: 'numeric', precision: 10, scale: 2, default: '0' })
   deliveryFee: string;
 
+  /**
+   * 配送改约附加费（在原配送费之外）：
+   * 拆装上楼费 / 吊装费 / 改送他址转运费；结算时并入配送相关收入。
+   */
+  @Column({ type: 'numeric', precision: 10, scale: 2, default: '0' })
+  surchargeFee: string;
+
   @Column({ default: '' })
   buyerAddress: string;
+
+  /** 改送后的实际收货地址（未改址时与 buyerAddress 相同） */
+  @Column({ default: '' })
+  finalAddress: string;
 
   @Column({ type: 'int', default: 1 })
   buyerFloor: number;

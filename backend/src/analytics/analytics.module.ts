@@ -7,6 +7,7 @@ import { Item } from '../entities/item.entity';
 import { Order } from '../entities/order.entity';
 import { Delivery } from '../entities/delivery.entity';
 import { Ticket } from '../entities/ticket.entity';
+import { DeliveryBlock } from '../entities/delivery-block.entity';
 import { SellerProfile } from '../entities/seller-profile.entity';
 import { User } from '../entities/user.entity';
 import { JwtAuthGuard } from '../auth/jwt.guard';
@@ -123,7 +124,8 @@ export class AnalyticsController {
       // 翻新投入占比低、周期短、退货少 → 适合入仓寄卖
       const elevatorBlocks =
         (failReasons['ELEVATOR_TOO_SMALL'] || 0) +
-        (failReasons['STAIR_TOO_NARROW'] || 0);
+        (failReasons['STAIR_TOO_NARROW'] || 0) +
+        (failReasons['HOIST_FAILED'] || 0);
       let channelAdvice: string;
       if (failRate >= 25 || elevatorBlocks >= Math.max(1, failed.length / 2)) {
         channelAdvice = '建议同城自提为主（配送失败率高/大件进梯困难），可提供付费拆装搬运';
@@ -154,6 +156,77 @@ export class AnalyticsController {
     });
 
     return { categories: result, generatedAt: new Date() };
+  }
+
+  /**
+   * 大件进不了电梯·配送改约看板：
+   * 统计买家方案分布、吊装成功率与失败三归因、退货回库与二次上架比例、附加费规模。
+   */
+  @Roles('OPS', 'ADMIN', 'CS')
+  @Get('delivery-blocks')
+  async deliveryBlocks() {
+    const blocks = await this.ds.getRepository(DeliveryBlock).find();
+    const items = await this.ds.getRepository(Item).find();
+    const itemMap = new Map(items.map((i) => [i.id, i]));
+
+    const total = blocks.length;
+    const count = (pred: (b: DeliveryBlock) => boolean) =>
+      blocks.filter(pred).length;
+
+    const byOption: Record<string, number> = {};
+    blocks.forEach((b) => {
+      if (b.buyerOption) byOption[b.buyerOption] = (byOption[b.buyerOption] || 0) + 1;
+    });
+
+    const hoistChosen = count((b) => b.buyerOption === 'HOIST');
+    const hoistSuccess = count((b) => b.hoistStatus === 'SUCCESS');
+    const hoistFailed = count((b) => b.hoistStatus === 'FAILED');
+    const hoistFailCauses: Record<string, number> = {};
+    blocks
+      .filter((b) => b.hoistStatus === 'FAILED' && b.hoistFailCause)
+      .forEach((b) => {
+        hoistFailCauses[b.hoistFailCause!] = (hoistFailCauses[b.hoistFailCause!] || 0) + 1;
+      });
+
+    const returned = count((b) => b.buyerOption === 'RETURN');
+    const relisted = count((b) => b.relistDecision === 'RELIST');
+    const noRelist = count((b) => b.relistDecision === 'NO_RELIST');
+    const surchargeSum = blocks.reduce(
+      (s, b) => s + (b.status === 'DELIVERED' ? Number(b.optionFee || 0) : 0),
+      0,
+    );
+    const claimSum = blocks.reduce(
+      (s, b) => s + Number(b.thirdPartyClaimAmount || 0),
+      0,
+    );
+
+    // 哪些品类最常发生「进不了电梯」改约
+    const byCategory: Record<string, number> = {};
+    blocks.forEach((b) => {
+      const cat = itemMap.get(b.itemId)?.category || 'UNKNOWN';
+      byCategory[cat] = (byCategory[cat] || 0) + 1;
+    });
+
+    return {
+      total,
+      byOption,
+      hoistChosen,
+      hoistSuccess,
+      hoistFailed,
+      hoistSuccessRatePct:
+        hoistChosen ? Math.round((hoistSuccess / hoistChosen) * 1000) / 10 : 0,
+      hoistFailCauses,
+      returnCount: returned,
+      returnRelistCount: relisted,
+      returnNoRelistCount: noRelist,
+      relistRatePct:
+        relisted + noRelist
+          ? Math.round((relisted / (relisted + noRelist)) * 1000) / 10
+          : 0,
+      deliveredSurchargeTotal: Math.round(surchargeSum * 100) / 100,
+      thirdPartyClaimTotal: Math.round(claimSum * 100) / 100,
+      byCategory,
+    };
   }
 
   @Roles('OPS', 'ADMIN', 'CS', 'APPRAISER')
@@ -204,6 +277,7 @@ export class AnalyticsController {
       Order,
       Delivery,
       Ticket,
+      DeliveryBlock,
       SellerProfile,
       User,
     ]),

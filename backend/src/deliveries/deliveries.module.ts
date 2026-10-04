@@ -125,6 +125,7 @@ export class DeliveryController {
     const valid = [
       'ELEVATOR_TOO_SMALL',
       'STAIR_TOO_NARROW',
+      'HOIST_FAILED',
       'BUYER_ABSENT',
       'TRANSIT_DAMAGE',
       'VEHICLE_UNAVAILABLE',

@@ -42,6 +42,7 @@ export const ORDER_STATUS: Record<string, { label: string; cls: string }> = {
   CANCELLED: { label: '已取消', cls: 'gray' },
   RETURNING: { label: '退货中', cls: 'red' },
   RETURNED: { label: '已退货', cls: 'red' },
+  RESHEDULING: { label: '配送改约中', cls: 'amber' },
 };
 
 export const DELIVERY_STATUS: Record<string, { label: string; cls: string }> = {
@@ -55,6 +56,7 @@ export const DELIVERY_STATUS: Record<string, { label: string; cls: string }> = {
 export const FAIL_REASON: Record<string, string> = {
   ELEVATOR_TOO_SMALL: '进不了电梯',
   STAIR_TOO_NARROW: '楼道过窄',
+  HOIST_FAILED: '吊装失败',
   BUYER_ABSENT: '买家不在',
   TRANSIT_DAMAGE: '途中磕碰',
   VEHICLE_UNAVAILABLE: '车辆不足',
@@ -135,6 +137,44 @@ export const SETTLEMENT_TYPE: Record<string, string> = {
   REFURBISH_FEE: '清洁翻新费',
   STORAGE_FEE: '仓储费',
   DELIVERY_FEE: '配送费',
+  RESCHEDULE_FEE: '改约附加费',
   COMPENSATION: '售后赔付/退款',
+  THIRD_PARTY_CLAIM: '第三方追偿',
   SELLER_PAYOUT: '卖家应得',
+};
+
+export const BLOCK_STATUS: Record<string, { label: string; cls: string }> = {
+  SURVEYED: { label: '待买家选方案', cls: 'amber' },
+  RESOLVING: { label: '方案执行中', cls: 'cyan' },
+  DELIVERED: { label: '改约送达', cls: 'green' },
+  RETURN_DECIDED: { label: '退货中', cls: 'red' },
+  WAREHOUSED: { label: '已回仓待上架', cls: 'purple' },
+  RELISTED: { label: '已二次上架', cls: 'green' },
+  CLOSED: { label: '已终止', cls: 'gray' },
+};
+
+export const BLOCK_OPTION: Record<string, string> = {
+  DISASSEMBLY: '拆装上楼',
+  HOIST: '吊装上楼',
+  RETURN: '退货',
+  CHANGE_ADDRESS: '改送其他地址',
+};
+
+export const HOIST_STATUS: Record<string, { label: string; cls: string }> = {
+  NONE: { label: '未吊装', cls: 'gray' },
+  SCHEDULED: { label: '已安排吊装', cls: 'cyan' },
+  SUCCESS: { label: '吊装成功', cls: 'green' },
+  FAILED: { label: '吊装失败', cls: 'red' },
+};
+
+export const HOIST_FAIL_CAUSE: Record<string, { label: string; cls: string }> = {
+  BUYER_ENVIRONMENT: { label: '买家环境限制', cls: 'amber' },
+  PLAN_MISJUDGE: { label: '配送方案误判', cls: 'red' },
+  THIRD_PARTY: { label: '第三方（吊装公司）责任', cls: 'purple' },
+};
+
+export const RELIST_DECISION: Record<string, string> = {
+  PENDING: '待决策',
+  RELIST: '二次上架',
+  NO_RELIST: '不再上架',
 };

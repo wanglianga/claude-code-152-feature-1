@@ -8,6 +8,7 @@ import { AppraisalModule } from './appraisals/appraisals.module';
 import { ItemModule } from './items/items.module';
 import { OrderModule } from './orders/orders.module';
 import { DeliveryModule } from './deliveries/deliveries.module';
+import { DeliveryBlockModule } from './delivery-blocks/delivery-blocks.module';
 import { TicketModule } from './tickets/tickets.module';
 import { SettlementModule } from './settlements/settlements.module';
 import { AnalyticsModule } from './analytics/analytics.module';
@@ -36,6 +37,7 @@ import { SeederService, SeederModule } from './seeder/seeder.module';
     ItemModule,
     OrderModule,
     DeliveryModule,
+    DeliveryBlockModule,
     TicketModule,
     SettlementModule,
     AnalyticsModule,

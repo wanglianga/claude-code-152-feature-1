@@ -10,6 +10,7 @@ import { Appraisal } from '../entities/appraisal.entity';
 import { Item, ItemWorkLog } from '../entities/item.entity';
 import { Order } from '../entities/order.entity';
 import { Delivery } from '../entities/delivery.entity';
+import { DeliveryBlock } from '../entities/delivery-block.entity';
 import { Ticket, TicketMessage } from '../entities/ticket.entity';
 import { Settlement, SettlementEntry } from '../entities/settlement.entity';
 
@@ -243,6 +244,30 @@ export class SeederService {
       m.create(TicketMessage, { ticketId: ticket2.id, authorId: byName['peisong'].id, authorRole: 'DELIVERY', authorName: '配送队长小马', content: '已尝试立放、吊绳方案均不可行，建议退货。', createdAt: daysAgo(4) }),
       m.create(TicketMessage, { ticketId: ticket2.id, authorId: byName['kefu'].id, authorRole: 'CS', authorName: '客服小陈', content: '裁定退货退款，平台与卖家共担 60 元搬运补偿，商品返仓重新上架需补充通道尺寸。', createdAt: daysAgo(3) }),
     ]);
+    // 样例 3 配套的配送改约单：勘测 → 买家选择退货 → 已回仓 A-05-01，等待二次上架决策
+    const block2 = await m.save(
+      m.create(DeliveryBlock, {
+        code: 'BL2026000002', orderId: order2.id, consignmentId: sofa2.id, itemId: item2.id,
+        ticketId: ticket2.id, status: 'WAREHOUSED',
+        photos: ['seed://block/sunmai-elevator-140.jpg', 'seed://block/sunmai-stair-turn.jpg'],
+        siteFloor: 9, elevatorDepthCm: 140, elevatorWidthCm: 150, elevatorDoorCm: 85,
+        stairWidthCm: 110, stairTurnWidthCm: 95,
+        disassemblable: false, disassemblyNote: '沙发底架一体成型，现场无法安全拆解',
+        laborSurcharge: '120.00',
+        siteNote: '轿厢进深仅 1.4m，沙发 2.4m；楼梯转角 0.95m，不可通过',
+        surveyedBy: byName['peisong'].id, surveyedAt: daysAgo(6),
+        buyerOption: 'RETURN', optionFee: '0.00',
+        optionHistory: [{
+          by: byName['sunmai'].id, byRole: 'BUYER', byName: '买家孙先生',
+          option: 'RETURN', fee: '0.00', at: daysAgo(5), note: '无法上楼，申请退货',
+        }],
+        hoistStatus: 'NONE',
+        warehouseSlot: 'A-05-01', relistDecision: 'PENDING',
+        createdAt: daysAgo(6),
+      }),
+    );
+    ticket2.blockId = block2.id;
+    await m.save(ticket2);
 
     // ---------- 样例 4：高风险卖家林反悔：一次反悔 + 一次描述不符；新申请触发 STRICT ----------
     const cancelledC = await m.save(
@@ -345,6 +370,222 @@ export class SeederService {
       }),
     );
 
+    // ---------- 样例 6：张女士新购三人位沙发，到楼进不了电梯，等待买家选择改约方案 ----------
+    const sofa3 = await m.save(
+      m.create(Consignment, {
+        code: 'CN202600008', sellerId: byName['wangjiayi'].id,
+        category: 'SOFA', brand: '芝华仕 CHEERS', sizeText: '225x96x88 cm',
+        material: '科技布+实木框架', yearsUsed: 2, defectPhotos: [],
+        disassemblable: true, floor: 6, elevator: 'ELEVATOR',
+        expectedPrice: '1500.00', acceptRefurbish: true,
+        address: '和平小区 3 栋 602', status: 'LISTED', verificationLevel: 'NORMAL',
+      }),
+    );
+    await m.save(
+      m.create(Appraisal, {
+        consignmentId: sofa3.id, appraiserId: byName['gujia'].id,
+        structuralScore: 1, stainScore: 1, odorScore: 1, mothScore: 1, warpScore: 1,
+        moveDifficulty: 4, consignmentPrice: '1280.00', minDealPrice: '1080.00',
+        commissionRate: '0.1500', estimatedRefurbishCost: '80.00',
+        cleaningAdvice: '常规清洁', refurbishSuggestions: '无需翻新', matchResult: 'MATCH',
+      }),
+    );
+    const item3 = await m.save(
+      m.create(Item, {
+        consignmentId: sofa3.id, category: 'SOFA',
+        title: '芝华仕三人位功能沙发（可拆装）',
+        description: '科技布，功能位正常，扶手与靠背可分离。',
+        status: 'SOLD', location: 'WAREHOUSE', warehouseSlot: 'A-02-07',
+        deliveryRadiusKm: 30, listedPrice: '1280.00', minDealPrice: '1080.00',
+        cleaningCost: '40.00', refurbishCost: '0.00',
+        enteredWarehouseAt: daysAgo(8), listedAt: daysAgo(3),
+      }),
+    );
+    const order3 = await m.save(
+      m.create(Order, {
+        code: 'OD2026000003', itemId: item3.id, consignmentId: sofa3.id,
+        buyerId: byName['zhangmai'].id, sellerId: byName['wangjiayi'].id,
+        dealPrice: '1280.00', deliveryFee: '60.00', surchargeFee: '0.00',
+        buyerAddress: '江景花苑 5 栋 1 单元 1202', buyerFloor: 12, buyerElevator: 'ELEVATOR',
+        needOldFurnitureRemoval: false, status: 'RESHEDULING',
+        appointmentWindow: '2026-10-04 上午',
+      }),
+    );
+    await m.save(
+      m.create(Delivery, {
+        orderId: order3.id, teamId: byName['peisong'].id,
+        vehicleType: 'LARGE_TRUCK', needsDisassembly: true,
+        pickupFloor: 6, pickupElevator: 'ELEVATOR',
+        dropoffFloor: 12, dropoffElevator: 'ELEVATOR',
+        scheduledWindow: '2026-10-04 上午', status: 'FAILED',
+        failReason: 'ELEVATOR_TOO_SMALL',
+        failNote: '买家电梯轿厢进深 1.3m，沙发 2.25m；楼梯转角仅 0.9m，已现场勘测登记',
+        createdAt: daysAgo(0),
+      }),
+    );
+    const block3 = await m.save(
+      m.create(DeliveryBlock, {
+        code: 'BL2026000003', orderId: order3.id, consignmentId: sofa3.id, itemId: item3.id,
+        ticketId: null, status: 'SURVEYED',
+        photos: ['seed://block/zhangmai-elevator-depth.jpg', 'seed://block/zhangmai-stair.jpg'],
+        siteFloor: 12, elevatorDepthCm: 130, elevatorWidthCm: 145, elevatorDoorCm: 80,
+        stairWidthCm: 105, stairTurnWidthCm: 90,
+        disassemblable: true,
+        disassemblyNote: '扶手与靠背可分离，拆解后最大件约 1.6m，2 名师傅约 1 小时可上楼复装',
+        laborSurcharge: '200.00',
+        siteNote: '轿厢进深不足且楼梯转角过窄；可拆装上楼，或窗外吊装（12 楼需查物业与天气）',
+        surveyedBy: byName['peisong'].id, surveyedAt: new Date(),
+        buyerOption: null, optionFee: '0.00', hoistStatus: 'NONE',
+        relistDecision: 'PENDING',
+      }),
+    );
+    const ticket3 = await m.save(
+      m.create(Ticket, {
+        consignmentId: sofa3.id, itemId: item3.id, orderId: order3.id, blockId: block3.id,
+        type: 'ELEVATOR_BLOCK', createdBy: byName['peisong'].id, creatorRole: 'DELIVERY',
+        status: 'OPEN', resolution: 'PENDING', liableParty: 'SHARED',
+        title: '三人位沙发到楼无法上楼（配送改约，待买家选择方案）',
+        description: '江景花苑 5 栋电梯进深 1.3m、楼梯转角 0.9m，沙发 2.25m。可拆装（加价 ¥200）或吊装，也可退货/改送他址。',
+      }),
+    );
+    block3.ticketId = ticket3.id;
+    await m.save(block3);
+    await m.save(
+      m.create(TicketMessage, {
+        ticketId: ticket3.id, authorId: byName['peisong'].id, authorRole: 'DELIVERY',
+        authorName: '配送队长小马',
+        content: '现场照片已上传，建议拆装上楼（¥200，约 1 小时）；如需吊装需先取得物业许可并确认天气与保险。',
+      }),
+    );
+
+    // ---------- 样例 7：吊装失败（第三方吊装公司责任），等待买家重新选择方案 ----------
+    const sofa4 = await m.save(
+      m.create(Consignment, {
+        code: 'CN202600009', sellerId: byName['liujing'].id,
+        category: 'SOFA', brand: '左右家私 ZUOYOU', sizeText: '235x100x92 cm',
+        material: '真皮', yearsUsed: 5, defectPhotos: [],
+        disassemblable: false, floor: 3, elevator: 'NO_ELEVATOR',
+        expectedPrice: '800.00', acceptRefurbish: true,
+        address: '城南公寓', status: 'LISTED', verificationLevel: 'NORMAL',
+      }),
+    );
+    await m.save(
+      m.create(Appraisal, {
+        consignmentId: sofa4.id, appraiserId: byName['gujia'].id,
+        structuralScore: 2, stainScore: 2, odorScore: 1, mothScore: 1, warpScore: 2,
+        moveDifficulty: 5, consignmentPrice: '680.00', minDealPrice: '520.00',
+        commissionRate: '0.1500', estimatedRefurbishCost: '100.00',
+        cleaningAdvice: '皮面保养', refurbishSuggestions: '建议自提或吊装', matchResult: 'MINOR_DIFF',
+      }),
+    );
+    const item4 = await m.save(
+      m.create(Item, {
+        consignmentId: sofa4.id, category: 'SOFA',
+        title: '左右家私真皮三人位沙发（不可拆装）',
+        description: '皮面有使用痕迹，结构完好，不可拆装。',
+        status: 'SOLD', location: 'WAREHOUSE', warehouseSlot: 'A-06-03',
+        deliveryRadiusKm: 15, listedPrice: '680.00', minDealPrice: '520.00',
+        cleaningCost: '50.00', refurbishCost: '60.00',
+        enteredWarehouseAt: daysAgo(7), listedAt: daysAgo(2),
+      }),
+    );
+    const order4 = await m.save(
+      m.create(Order, {
+        code: 'OD2026000004', itemId: item4.id, consignmentId: sofa4.id,
+        buyerId: byName['sunmai'].id, sellerId: byName['liujing'].id,
+        dealPrice: '680.00', deliveryFee: '135.00', surchargeFee: '0.00',
+        buyerAddress: '云顶阁 2 栋 1601', buyerFloor: 16, buyerElevator: 'ELEVATOR',
+        status: 'RESHEDULING', appointmentWindow: '2026-10-03 下午',
+        createdAt: daysAgo(1),
+      }),
+    );
+    await m.save(
+      m.create(Delivery, {
+        orderId: order4.id, teamId: byName['peisong'].id,
+        vehicleType: 'LARGE_TRUCK', needsDisassembly: false,
+        pickupFloor: 3, pickupElevator: 'NO_ELEVATOR',
+        dropoffFloor: 16, dropoffElevator: 'ELEVATOR',
+        scheduledWindow: '2026-10-03 下午', status: 'FAILED',
+        failReason: 'HOIST_FAILED', failNote: '吊装公司吊带滑落中止作业，家具未受损',
+        createdAt: daysAgo(1),
+      }),
+    );
+    const block4 = await m.save(
+      m.create(DeliveryBlock, {
+        code: 'BL2026000004', orderId: order4.id, consignmentId: sofa4.id, itemId: item4.id,
+        ticketId: null, status: 'SURVEYED',
+        photos: ['seed://block/sunmai-hoist-site.jpg'],
+        siteFloor: 16, elevatorDepthCm: 135, stairTurnWidthCm: 88,
+        disassemblable: false, disassemblyNote: '一体式木架，无法现场拆解',
+        laborSurcharge: '0.00',
+        siteNote: '电梯进不去、楼梯转角不足、不可拆装，买家选择吊装',
+        surveyedBy: byName['peisong'].id, surveyedAt: daysAgo(1),
+        buyerOption: 'HOIST', optionFee: '0.00',
+        optionHistory: [{
+          by: byName['sunmai'].id, byRole: 'BUYER', byName: '买家孙先生',
+          option: 'HOIST', fee: '600.00', at: daysAgo(1), note: '16 楼，同意吊装',
+        }],
+        hoistCompany: '顺达高空吊装有限公司', propertyPermit: true,
+        propertyPermitNote: '物业已开具吊装许可单（有效期 2026-10-03）',
+        weather: '晴，东北风 2 级', insuranceConfirmed: true,
+        insurancePolicy: 'POLICY-SD-20261003-16', hoistQuote: '600.00',
+        hoistStatus: 'FAILED', hoistFailCause: 'THIRD_PARTY',
+        hoistFailNote: '吊装公司吊带固定不规范滑落，现场监督中止；家具未受损，已暂扣作业单',
+        thirdPartyClaimAmount: '600.00',
+        hoistArrangedBy: byName['peisong'].id, hoistArrangedAt: daysAgo(1),
+        relistDecision: 'PENDING',
+        createdAt: daysAgo(1),
+      }),
+    );
+    const ticket4 = await m.save(
+      m.create(Ticket, {
+        consignmentId: sofa4.id, itemId: item4.id, orderId: order4.id, blockId: block4.id,
+        type: 'ELEVATOR_BLOCK', createdBy: byName['peisong'].id, creatorRole: 'DELIVERY',
+        status: 'OPEN', resolution: 'PENDING', liableParty: 'DELIVERY',
+        title: '16 楼吊装失败：吊装公司操作不当（第三方责任），待买家重新选择方案',
+        description: '顺达高空吊装作业时吊带滑落，归因第三方责任，平台垫付吊装费并向其追偿 600 元。',
+        createdAt: daysAgo(0),
+      }),
+    );
+    block4.ticketId = ticket4.id;
+    await m.save(block4);
+    await m.save(TicketMessage, [
+      m.create(TicketMessage, { ticketId: ticket4.id, authorId: byName['peisong'].id, authorRole: 'DELIVERY', authorName: '配送队长小马', content: '物业许可、天气、保险均齐全；失败为吊装公司吊带固定不规范，已现场拍照取证。', createdAt: daysAgo(0) }),
+      m.create(TicketMessage, { ticketId: ticket4.id, authorId: byName['kefu'].id, authorRole: 'CS', authorName: '客服小陈', content: '已登记第三方责任与 600 元追偿，请买家重新选择拆装（不可行）/再次吊装/退货/改址。', createdAt: daysAgo(0) }),
+    ]);
+
+    // ---------- 样例 8：在售双人沙发（可供演示下单/配送改约） ----------
+    const sofa5 = await m.save(
+      m.create(Consignment, {
+        code: 'CN202600010', sellerId: byName['liujing'].id,
+        category: 'SOFA', brand: '全友 QUANU', sizeText: '180x90x82 cm',
+        material: '布艺', yearsUsed: 2, defectPhotos: [],
+        disassemblable: false, floor: 2, elevator: 'NO_ELEVATOR',
+        expectedPrice: '620.00', acceptRefurbish: true,
+        address: '城南公寓', status: 'LISTED', verificationLevel: 'NORMAL',
+      }),
+    );
+    await m.save(
+      m.create(Appraisal, {
+        consignmentId: sofa5.id, appraiserId: byName['gujia'].id,
+        structuralScore: 1, stainScore: 2, odorScore: 1, mothScore: 1, warpScore: 1,
+        moveDifficulty: 3, consignmentPrice: '520.00', minDealPrice: '420.00',
+        commissionRate: '0.1500', estimatedRefurbishCost: '60.00',
+        cleaningAdvice: '布套拆洗', refurbishSuggestions: '无需翻新', matchResult: 'MATCH',
+      }),
+    );
+    await m.save(
+      m.create(Item, {
+        consignmentId: sofa5.id, category: 'SOFA',
+        title: '全友双人位布艺沙发（不可拆装）',
+        description: '布套可拆洗，一体式框架不可拆装；电梯/楼道狭窄请先核对尺寸。',
+        status: 'LISTED', location: 'WAREHOUSE', warehouseSlot: 'A-01-09',
+        deliveryRadiusKm: 20, listedPrice: '520.00', minDealPrice: '420.00',
+        cleaningCost: '30.00', refurbishCost: '0.00',
+        enteredWarehouseAt: daysAgo(4), listedAt: daysAgo(1),
+      }),
+    );
+
     // eslint-disable-next-line no-console
     console.log('[seed] 演示数据已写入');
   }
@@ -354,7 +595,7 @@ export class SeederService {
   imports: [
     TypeOrmModule.forFeature([
       User, SellerProfile, Consignment, Appraisal, Item, ItemWorkLog,
-      Order, Delivery, Ticket, TicketMessage, Settlement, SettlementEntry,
+      Order, Delivery, DeliveryBlock, Ticket, TicketMessage, Settlement, SettlementEntry,
     ]),
   ],
   providers: [SeederService],

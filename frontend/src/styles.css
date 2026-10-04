@@ -202,3 +202,17 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--brand-soft)
 .score-3 { background: #eab308; } .score-4 { background: #f97316; } .score-5 { background: #dc2626; }
 .timeline-item { border-left: 3px solid var(--brand-soft); padding: 4px 0 4px 12px; margin-bottom: 8px; font-size: 13px; }
 .timeline-item b { color: var(--ink); }
+
+/* 配送改约：方案选择卡片与选择记录 */
+.option-list { display: flex; flex-direction: column; gap: 10px; }
+.option-card {
+  display: flex; align-items: flex-start; gap: 10px; border: 1px solid var(--line);
+  border-radius: 10px; padding: 10px 12px; cursor: pointer; background: #fff;
+}
+.option-card input { width: auto; margin-top: 3px; }
+.option-card.active { border-color: var(--brand); background: #f0fdfa; }
+.option-card.disabled { opacity: .6; cursor: not-allowed; }
+.timeline { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.timeline li {
+  border-left: 3px solid var(--brand-soft); padding: 4px 0 4px 12px; font-size: 12.5px;
+}

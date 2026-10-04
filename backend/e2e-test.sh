@@ -118,6 +118,139 @@ curl -s -o /dev/null -X POST $BASE/consignments/$cancelid/cancel -H "Authorizati
 pf=$(curl -s $BASE/analytics/seller-profiles -H "Authorization: Bearer $T_OPS" | jq -r '.[] | select(.username=="linfan") | .backtrackCount')
 check "$pf" "2" "反悔次数累加到 2（画像联动）"
 
+echo "== [13] 大件进不了电梯·配送改约（场景A：吊装失败第三方责任→退货→追偿→二次上架） =="
+SOFA_ID=$(curl -s "$BASE/items" -H "Authorization: Bearer $T_BUYER" | jq -r '[.[] | select(.category=="SOFA")] | max_by(.listedPrice|tonumber) | .id')
+ordA=$(curl -s -X POST $BASE/orders -H "Authorization: Bearer $T_BUYER" -H 'Content-Type: application/json' -d "{
+  \"itemId\":\"$SOFA_ID\",\"buyerAddress\":\"江景花苑 5 栋 1602\",\"buyerFloor\":16,\"buyerElevator\":\"ELEVATOR\",
+  \"appointmentWindow\":\"今天下午\"}")
+ORD_A=$(echo "$ordA" | jq -r '.order.id')
+curl -s -o /dev/null -X POST $BASE/deliveries/$ORD_A/schedule -H "Authorization: Bearer $T_DEL" -H 'Content-Type: application/json' -d '{"vehicleType":"LARGE_TRUCK","scheduledWindow":"今天下午"}'
+curl -s -o /dev/null -X POST $BASE/deliveries/$ORD_A/load -H "Authorization: Bearer $T_DEL"
+# 配送员现场勘测：电梯进深 1.3m、楼梯转角 0.9m、现场判定不可拆装、人工加价 200
+sv=$(curl -s -X POST $BASE/delivery-blocks/order/$ORD_A/survey -H "Authorization: Bearer $T_DEL" -H 'Content-Type: application/json' -d '{
+  "photos":["http://x/elevator.jpg"],"siteFloor":16,"elevatorDepthCm":130,"elevatorDoorCm":80,
+  "stairTurnWidthCm":90,"disassemblable":false,"disassemblyNote":"一体木架不可拆",
+  "laborSurcharge":200,"siteNote":"沙发 2.2m 无法进梯"}')
+BL_A=$(echo "$sv" | jq -r '.block.id')
+TK_A=$(echo "$sv" | jq -r '.ticket.id')
+ost=$(curl -s $BASE/orders/$ORD_A -H "Authorization: Bearer $T_BUYER" | jq -r '.order.status')
+check "$ost" "RESHEDULING" "勘测登记后订单进入配送改约 RESHEDULING，并自动建工单"
+[ -n "$BL_A" ] && [ "$BL_A" != "null" ] && ok "配送改约单已创建 id=$BL_A（含现场照片/楼层/尺寸/拆装/加价）"
+# 不可拆装却选拆装上楼 -> 业务拦截
+code=$(curl -s -o /dev/null -w '%{http_code}' -X POST $BASE/delivery-blocks/$BL_A/option -H "Authorization: Bearer $T_BUYER" -H 'Content-Type: application/json' -d '{"option":"DISASSEMBLY"}')
+check "$code" "400" "现场判定不可拆装时，拆装上楼方案被拦截"
+# 买家选择吊装
+curl -s -o /dev/null -X POST $BASE/delivery-blocks/$BL_A/option -H "Authorization: Bearer $T_BUYER" -H 'Content-Type: application/json' -d '{"option":"HOIST","note":"16楼同意吊装"}'
+# 无物业许可/无保险 -> 拦截
+code=$(curl -s -o /dev/null -w '%{http_code}' -X POST $BASE/delivery-blocks/$BL_A/arrange-hoist -H "Authorization: Bearer $T_DEL" -H 'Content-Type: application/json' -d '{"hoistCompany":"顺达吊装","propertyPermit":false,"weather":"晴","insuranceConfirmed":true,"hoistQuote":500}')
+check "$code" "400" "吊装未取得物业许可被拦截"
+# 许可齐全但大风天气 -> 拦截
+code=$(curl -s -o /dev/null -w '%{http_code}' -X POST $BASE/delivery-blocks/$BL_A/arrange-hoist -H "Authorization: Bearer $T_DEL" -H 'Content-Type: application/json' -d '{"hoistCompany":"顺达吊装","propertyPermit":true,"weather":"大风 7 级","insuranceConfirmed":true,"hoistQuote":500}')
+check "$code" "400" "大风天气不满足高空吊装条件被拦截"
+# 四要素齐全安排吊装，吊装费 500 写入订单附加费
+curl -s -o /dev/null -X POST $BASE/delivery-blocks/$BL_A/arrange-hoist -H "Authorization: Bearer $T_DEL" -H 'Content-Type: application/json' -d '{"hoistCompany":"顺达高空吊装有限公司","propertyPermit":true,"propertyPermitNote":"物业许可单 XK-01","weather":"晴，东北风 2 级","insuranceConfirmed":true,"insurancePolicy":"POL-01","hoistQuote":500}'
+sf=$(curl -s $BASE/orders/$ORD_A -H "Authorization: Bearer $T_BUYER" | jq -r '.order.surchargeFee')
+check "$sf" "500.00" "吊装安排后订单附加费=吊装报价 500"
+# 吊装失败：第三方责任，追偿 500；附加费不再向买家收取
+curl -s -o /dev/null -X POST $BASE/delivery-blocks/$BL_A/hoist-result -H "Authorization: Bearer $T_DEL" -H 'Content-Type: application/json' -d '{"success":false,"failCause":"THIRD_PARTY","failNote":"吊带固定不规范滑落","thirdPartyClaimAmount":500}'
+sf=$(curl -s $BASE/orders/$ORD_A -H "Authorization: Bearer $T_BUYER" | jq -r '.order.surchargeFee')
+check "$sf" "0.00" "第三方责任吊装失败：吊装费不向买家收取（转第三方追偿）"
+hc=$(curl -s $BASE/delivery-blocks/$BL_A -H "Authorization: Bearer $T_BUYER" | jq -r '.block.hoistFailCause')
+check "$hc" "THIRD_PARTY" "吊装失败归因为第三方责任（区别于买家环境/方案误判）"
+# 买家改选退货 -> 回库 -> 结算
+curl -s -o /dev/null -X POST $BASE/delivery-blocks/$BL_A/option -H "Authorization: Bearer $T_BUYER" -H 'Content-Type: application/json' -d '{"option":"RETURN","note":"放弃购买"}'
+curl -s -o /dev/null -X POST $BASE/delivery-blocks/$BL_A/warehouse-return -H "Authorization: Bearer $T_WH" -H 'Content-Type: application/json' -d '{"warehouseSlot":"W-09-01","note":"外观完好"}'
+ost=$(curl -s $BASE/orders/$ORD_A -H "Authorization: Bearer $T_BUYER" | jq -r '.order.status')
+check "$ost" "RETURNED" "退货商品回库登记后订单 RETURNED"
+stA=$(curl -s -X POST $BASE/settlements/order/$ORD_A/generate -H "Authorization: Bearer $T_CS")
+echo "$stA" | jq -e '[.entries[] | select(.type=="THIRD_PARTY_CLAIM" and .amount=="500.00")] | length == 1' >/dev/null && ok "结算含第三方追偿 500（来源：吊装公司责任）"
+echo "$stA" | jq -r '.entries[] | select(.type=="COMPENSATION") | .amount' | grep -q '980.00' && ok "第三方责任：买家成交款 980 全额退还（不承担吊装费）"
+echo "$stA" | jq -r '.entries[] | select(.type=="THIRD_PARTY_CLAIM") | .source' | grep -q '追偿' && ok "第三方追偿条目来源说明清楚"
+echo "$stA" | jq -e '.settlement.sellerPayout == "0.00"' >/dev/null && ok "退货单卖家应得为 0"
+# 二次上架（产生二次上架，通道尺寸写入商品描述）
+curl -s -o /dev/null -X POST $BASE/delivery-blocks/$BL_A/relist-decision -H "Authorization: Bearer $T_WH" -H 'Content-Type: application/json' -d '{"decision":"RELIST","reason":"复检合格","deliveryRadiusKm":30}'
+rs=$(curl -s $BASE/delivery-blocks/$BL_A -H "Authorization: Bearer $T_DEL" | jq -r '.block.status')
+check "$rs" "RELISTED" "退货回库后二次上架完成（block RELISTED）"
+
+echo "== [14] 配送改约（场景B：拆装上楼送达，附加费计入结算不影响卖家应得） =="
+BK_ID=$(curl -s "$BASE/items" -H "Authorization: Bearer $T_BUYER" | jq -r '.[] | select(.category=="BOOKCASE" and .status=="LISTED") | .id' | head -1)
+ordB=$(curl -s -X POST $BASE/orders -H "Authorization: Bearer $T_BUYER" -H 'Content-Type: application/json' -d "{
+  \"itemId\":\"$BK_ID\",\"buyerAddress\":\"幸福里 9 栋 302\",\"buyerFloor\":3,\"buyerElevator\":\"ELEVATOR\"}")
+ORD_B=$(echo "$ordB" | jq -r '.order.id')
+curl -s -o /dev/null -X POST $BASE/deliveries/$ORD_B/schedule -H "Authorization: Bearer $T_DEL" -H 'Content-Type: application/json' -d '{"vehicleType":"SMALL_VAN","scheduledWindow":"明天上午"}'
+curl -s -o /dev/null -X POST $BASE/deliveries/$ORD_B/load -H "Authorization: Bearer $T_DEL"
+svB=$(curl -s -X POST $BASE/delivery-blocks/order/$ORD_B/survey -H "Authorization: Bearer $T_DEL" -H 'Content-Type: application/json' -d '{
+  "siteFloor":3,"elevatorDepthCm":120,"stairTurnWidthCm":85,"disassemblable":true,
+  "disassemblyNote":"层板可拆","laborSurcharge":100,"siteNote":"拆装可上楼"}')
+BL_B=$(echo "$svB" | jq -r '.block.id')
+curl -s -o /dev/null -X POST $BASE/delivery-blocks/$BL_B/option -H "Authorization: Bearer $T_BUYER" -H 'Content-Type: application/json' -d '{"option":"DISASSEMBLY"}'
+curl -s -o /dev/null -X POST $BASE/delivery-blocks/$BL_B/complete-delivery -H "Authorization: Bearer $T_DEL" -H 'Content-Type: application/json' -d '{"note":"拆装复装完成"}'
+ost=$(curl -s $BASE/orders/$ORD_B -H "Authorization: Bearer $T_BUYER" | jq -r '.order.status')
+check "$ost" "DELIVERED" "拆装上楼方案执行完成，订单 DELIVERED"
+stB=$(curl -s -X POST $BASE/settlements/order/$ORD_B/generate -H "Authorization: Bearer $T_CS")
+echo "$stB" | jq -e '[.entries[] | select(.type=="RESCHEDULE_FEE" and .amount=="100.00")] | length == 1' >/dev/null && ok "结算含拆装改约附加费 100（现场拆装+人工加价，来源改约单）"
+echo "$stB" | jq -r '.entries[] | select(.type=="RESCHEDULE_FEE") | .source' | grep -q '拆装' && ok "改约附加费来源写明方案与计费方式"
+echo "$stB" | jq -e '[.entries[] | select(.type=="COMMISSION")][0].amount == "22.50"' >/dev/null && ok "卖家佣金仍按成交价计算（改约附加费不扣卖家）"
+
+echo "== [15] 配送改约（场景C：买家环境限制吊装失败→改送他址送达，转运费130） =="
+SOFA2_ID=$(curl -s "$BASE/items" -H "Authorization: Bearer $T_BUYER" | jq -r '[.[] | select(.category=="SOFA" and .status=="LISTED")] | min_by(.listedPrice|tonumber) | .id')
+ordC=$(curl -s -X POST $BASE/orders -H "Authorization: Bearer $T_BUYER" -H 'Content-Type: application/json' -d "{
+  \"itemId\":\"$SOFA2_ID\",\"buyerAddress\":\"云顶阁 2 栋 2001\",\"buyerFloor\":20,\"buyerElevator\":\"ELEVATOR\"}")
+ORD_C=$(echo "$ordC" | jq -r '.order.id')
+curl -s -o /dev/null -X POST $BASE/deliveries/$ORD_C/schedule -H "Authorization: Bearer $T_DEL" -H 'Content-Type: application/json' -d '{"vehicleType":"LARGE_TRUCK","scheduledWindow":"后天下午"}'
+curl -s -o /dev/null -X POST $BASE/deliveries/$ORD_C/load -H "Authorization: Bearer $T_DEL"
+svC=$(curl -s -X POST $BASE/delivery-blocks/order/$ORD_C/survey -H "Authorization: Bearer $T_DEL" -H 'Content-Type: application/json' -d '{
+  "siteFloor":20,"elevatorDepthCm":135,"stairTurnWidthCm":88,"disassemblable":false,
+  "laborSurcharge":0,"siteNote":"外立面施工无法支索，先尝试吊装"}')
+BL_C=$(echo "$svC" | jq -r '.block.id')
+curl -s -o /dev/null -X POST $BASE/delivery-blocks/$BL_C/option -H "Authorization: Bearer $T_BUYER" -H 'Content-Type: application/json' -d '{"option":"HOIST"}'
+curl -s -o /dev/null -X POST $BASE/delivery-blocks/$BL_C/arrange-hoist -H "Authorization: Bearer $T_DEL" -H 'Content-Type: application/json' -d '{"hoistCompany":"云梯吊装","propertyPermit":true,"weather":"晴，风力 2 级","insuranceConfirmed":true,"insurancePolicy":"POL-02","hoistQuote":500}'
+# 买家环境限制导致失败（外立面无吊点）：吊装费暂由买家承担
+curl -s -o /dev/null -X POST $BASE/delivery-blocks/$BL_C/hoist-result -H "Authorization: Bearer $T_DEL" -H 'Content-Type: application/json' -d '{"success":false,"failCause":"BUYER_ENVIRONMENT","failNote":"外墙施工无锚固点，物业临时要求停工"}'
+hc=$(curl -s $BASE/delivery-blocks/$BL_C -H "Authorization: Bearer $T_BUYER" | jq -r '.block.hoistFailCause')
+check "$hc" "BUYER_ENVIRONMENT" "吊装失败归因为买家环境限制（区别于方案误判/第三方）"
+# 改选「改送他址」：3 楼无电梯 -> 100 + 2×15 = 130
+opC=$(curl -s -X POST $BASE/delivery-blocks/$BL_C/option -H "Authorization: Bearer $T_BUYER" -H 'Content-Type: application/json' -d '{"option":"CHANGE_ADDRESS","newAddress":"亲友家 一楼小院 3 栋","newFloor":3,"newElevator":"NO_ELEVATOR"}')
+check "$(echo "$opC" | jq -r '.optionFee')" "130.00" "改送他址转运费=基础100+无电梯2层×15=130"
+curl -s -o /dev/null -X POST $BASE/delivery-blocks/$BL_C/complete-delivery -H "Authorization: Bearer $T_DEL" -H 'Content-Type: application/json' -d '{"note":"改址送达"}'
+ost=$(curl -s $BASE/orders/$ORD_C -H "Authorization: Bearer $T_BUYER" | jq -r '.order.status')
+check "$ost" "DELIVERED" "改送他址方案执行完成，订单 DELIVERED（地址/楼层同步更新）"
+stC=$(curl -s -X POST $BASE/settlements/order/$ORD_C/generate -H "Authorization: Bearer $T_CS")
+echo "$stC" | jq -e '[.entries[] | select(.type=="RESCHEDULE_FEE" and .amount=="130.00")] | length == 1' >/dev/null && ok "结算含改址转运附加费 130（来源改约单）"
+echo "$stC" | jq -e '.settlement.platformIncome == "268.00"' >/dev/null && ok "平台净收入=佣金78+配送费60+改址费130=268"
+
+echo "== [16] 配送改约（场景D：方案误判吊装失败→退货全额退款→不再上架） =="
+ordD=$(curl -s -X POST $BASE/orders -H "Authorization: Bearer $T_BUYER" -H 'Content-Type: application/json' -d "{
+  \"itemId\":\"$SOFA_ID\",\"buyerAddress\":\"望江台 1 栋 1801\",\"buyerFloor\":18,\"buyerElevator\":\"ELEVATOR\"}")
+ORD_D=$(echo "$ordD" | jq -r '.order.id')
+curl -s -o /dev/null -X POST $BASE/deliveries/$ORD_D/schedule -H "Authorization: Bearer $T_DEL" -H 'Content-Type: application/json' -d '{"vehicleType":"LARGE_TRUCK","scheduledWindow":"周五下午"}'
+curl -s -o /dev/null -X POST $BASE/deliveries/$ORD_D/load -H "Authorization: Bearer $T_DEL"
+svD=$(curl -s -X POST $BASE/delivery-blocks/order/$ORD_D/survey -H "Authorization: Bearer $T_DEL" -H 'Content-Type: application/json' -d '{
+  "siteFloor":18,"elevatorDepthCm":138,"stairTurnWidthCm":92,"disassemblable":true,
+  "disassemblyNote":"本可拆装上楼，调度却误排吊装","laborSurcharge":150,"siteNote":"调度误判为必须吊装"}')
+BL_D=$(echo "$svD" | jq -r '.block.id')
+curl -s -o /dev/null -X POST $BASE/delivery-blocks/$BL_D/option -H "Authorization: Bearer $T_BUYER" -H 'Content-Type: application/json' -d '{"option":"HOIST"}'
+curl -s -o /dev/null -X POST $BASE/delivery-blocks/$BL_D/arrange-hoist -H "Authorization: Bearer $T_DEL" -H 'Content-Type: application/json' -d '{"hoistCompany":"顺达高空吊装有限公司","propertyPermit":true,"weather":"多云，风力 3 级","insuranceConfirmed":true,"insurancePolicy":"POL-03","hoistQuote":400}'
+curl -s -o /dev/null -X POST $BASE/delivery-blocks/$BL_D/hoist-result -H "Authorization: Bearer $T_DEL" -H 'Content-Type: application/json' -d '{"success":false,"failCause":"PLAN_MISJUDGE","failNote":"现场实测本可拆装，吊装属方案误判"}'
+hc=$(curl -s $BASE/delivery-blocks/$BL_D -H "Authorization: Bearer $T_BUYER" | jq -r '.block.hoistFailCause')
+check "$hc" "PLAN_MISJUDGE" "吊装失败归因为配送方案误判（吊装费平台承担）"
+curl -s -o /dev/null -X POST $BASE/delivery-blocks/$BL_D/option -H "Authorization: Bearer $T_BUYER" -H 'Content-Type: application/json' -d '{"option":"RETURN","note":"不想再等"}'
+bb=$(curl -s $BASE/delivery-blocks/$BL_D -H "Authorization: Bearer $T_BUYER" | jq -r '.block.buyerBorneOnReturn')
+check "$bb" "0.00" "方案误判退货：买家不承担吊装费，全额退款"
+curl -s -o /dev/null -X POST $BASE/delivery-blocks/$BL_D/warehouse-return -H "Authorization: Bearer $T_WH" -H 'Content-Type: application/json' -d '{"warehouseSlot":"W-10-03"}'
+stD=$(curl -s -X POST $BASE/settlements/order/$ORD_D/generate -H "Authorization: Bearer $T_CS")
+echo "$stD" | jq -e '[.entries[] | select(.type=="COMPENSATION" and .amount=="980.00")] | length == 1' >/dev/null && ok "方案误判退货：成交款 980 全额退还买家"
+echo "$stD" | jq -e '[.entries[] | select(.type=="RESCHEDULE_FEE" and .amount=="400.00")] | length == 1' >/dev/null && ok "误判产生的吊装费 400 由平台吸收（结算列明，不向买家/卖家收取）"
+curl -s -o /dev/null -X POST $BASE/delivery-blocks/$BL_D/relist-decision -H "Authorization: Bearer $T_WH" -H 'Content-Type: application/json' -d '{"decision":"NO_RELIST","reason":"多次配送受阻，转线下处置"}'
+rs=$(curl -s $BASE/delivery-blocks/$BL_D -H "Authorization: Bearer $T_DEL" | jq -r '.block.relistDecision')
+check "$rs" "NO_RELIST" "回库复检后决定不再上架（不产生二次上架，商品下架）"
+
+echo "== [17] 运营改约看板 =="
+ab=$(curl -s $BASE/analytics/delivery-blocks -H "Authorization: Bearer $T_OPS")
+echo "$ab" | jq -e '.byOption.RETURN >= 2 and .byOption.HOIST >= 1 and .byOption.DISASSEMBLY >= 1 and .byOption.CHANGE_ADDRESS >= 1' >/dev/null && ok "看板统计买家四方案分布齐全（含最终退货≥2）"
+echo "$ab" | jq -e '.hoistFailCauses.THIRD_PARTY >= 1 and .hoistFailCauses.BUYER_ENVIRONMENT >= 1 and .hoistFailCauses.PLAN_MISJUDGE >= 1' >/dev/null && ok "看板区分吊装失败三类归因（买家环境/方案误判/第三方均出现）"
+echo "$ab" | jq -e '.thirdPartyClaimTotal >= 500 and .returnRelistCount >= 1 and .deliveredSurchargeTotal >= 230' >/dev/null && ok "看板统计第三方追偿、二次上架数量与已送达附加费"
+
 echo
 echo "结果：PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ]

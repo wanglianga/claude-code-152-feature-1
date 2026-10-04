@@ -56,6 +56,11 @@ export class Ticket {
   @Column({ type: 'uuid', nullable: true })
   orderId: string | null;
 
+  /** 关联的「大件进不了电梯配送改约单」（ELEVATOR_BLOCK 工单） */
+  @Index()
+  @Column({ type: 'uuid', nullable: true })
+  blockId: string | null;
+
   @Index()
   @Column({ type: 'varchar', length: 24 })
   type: TicketType;

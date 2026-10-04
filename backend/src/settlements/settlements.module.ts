@@ -17,11 +17,25 @@ import { Item } from '../entities/item.entity';
 import { Appraisal } from '../entities/appraisal.entity';
 import { Ticket } from '../entities/ticket.entity';
 import { Consignment } from '../entities/consignment.entity';
+import { DeliveryBlock } from '../entities/delivery-block.entity';
 import { JwtAuthGuard } from '../auth/jwt.guard';
 import { RolesGuard, Roles } from '../auth/roles.guard';
 
 const STORAGE_DAILY_RATE = 3; // 仓储费 3 元/天
 const money = (n: number) => n.toFixed(2);
+
+const OPTION_LABEL: Record<string, string> = {
+  DISASSEMBLY: '拆装上楼',
+  HOIST: '吊装上楼',
+  CHANGE_ADDRESS: '改送其他地址',
+  RETURN: '退货',
+};
+
+const HOIST_CAUSE_LABEL: Record<string, string> = {
+  BUYER_ENVIRONMENT: '买家环境限制',
+  PLAN_MISJUDGE: '配送方案误判',
+  THIRD_PARTY: '第三方（吊装公司）责任',
+};
 
 /**
  * 结算：成交价、佣金、翻新费、仓储费、配送费、售后赔付逐项列明来源。
@@ -117,6 +131,16 @@ export class SettlementController {
         )
         .reduce((s, t) => s + Number(t.compensationAmount), 0);
 
+      // 大件进不了电梯的配送改约单（可能含拆装/吊装/改址附加费与吊装失败责任分担）
+      const block = await m.findOne(DeliveryBlock, {
+        where: { orderId: order.id },
+      });
+      const surcharge = Number(order.surchargeFee || 0);
+      const buyerBorneOnReturn = block ? Number(block.buyerBorneOnReturn || 0) : 0;
+      const thirdPartyClaim = block ? Number(block.thirdPartyClaimAmount || 0) : 0;
+      const failedHoistCost =
+        block && block.hoistStatus === 'FAILED' ? Number(block.hoistQuote || 0) : 0;
+
       const entries: Partial<SettlementEntry>[] = [];
       const add = (
         type: any,
@@ -137,11 +161,16 @@ export class SettlementController {
       let platformIncome = 0;
 
       if (returned) {
-        // 退货：买家全额退款，卖家应得为 0；翻新/仓储/配送成本由平台吸收（工单另有赔付约定从其约定）
+        // 退货：买家全额退款（买家环境限制导致吊装失败的已发生吊装费除外），卖家应得为 0；
+        // 翻新/仓储/配送/失败吊装成本按吊装失败归因由平台吸收或向第三方追偿/由买家承担。
+        const netRefund = Math.round((deal - buyerBorneOnReturn) * 100) / 100;
         add(
           'COMPENSATION',
-          deal,
-          `退货退款：订单 ${order.code} 成交款全额退还买家（来源：退货工单裁定）`,
+          netRefund,
+          buyerBorneOnReturn > 0
+            ? `退货退款：订单 ${order.code} 成交款 ¥${money(deal)}，扣除买家环境限制导致吊装失败的已发生吊装费 ¥${money(buyerBorneOnReturn)}，实际退还买家 ¥${money(netRefund)}`
+            : `退货退款：订单 ${order.code} 成交款全额退还买家（来源：退货/配送改约单）`,
+          block?.id || null,
         );
         if (refurb > 0) {
           add(
@@ -164,7 +193,44 @@ export class SettlementController {
             `配送费（来源：楼层/电梯/旧家具搬出计价；退货返程由平台承担）`,
           );
         }
-        platformIncome = -(refurb + storageFee + deliveryFee);
+        let returnCost = refurb + storageFee + deliveryFee;
+        if (failedHoistCost > 0) {
+          const cause = block?.hoistFailCause;
+          if (cause === 'THIRD_PARTY') {
+            add(
+              'RESCHEDULE_FEE',
+              failedHoistCost,
+              `吊装失败：平台先行垫付吊装费 ¥${money(failedHoistCost)}（吊装公司「${block?.hoistCompany}」责任），见第三方追偿条目冲抵`,
+              block?.id || null,
+            );
+            if (thirdPartyClaim > 0) {
+              add(
+                'THIRD_PARTY_CLAIM',
+                thirdPartyClaim,
+                `第三方追偿：吊装失败归因【${HOIST_CAUSE_LABEL['THIRD_PARTY']}】，平台向吊装公司「${block?.hoistCompany}」追偿 ¥${money(thirdPartyClaim)}（来源：配送改约单 ${block?.code}）`,
+                block?.id || null,
+              );
+            }
+          } else if (cause === 'PLAN_MISJUDGE') {
+            add(
+              'RESCHEDULE_FEE',
+              failedHoistCost,
+              `吊装失败：归因【${HOIST_CAUSE_LABEL['PLAN_MISJUDGE']}】，吊装费 ¥${money(failedHoistCost)} 由平台吸收，不向买家收取`,
+              block?.id || null,
+            );
+          } else {
+            add(
+              'RESCHEDULE_FEE',
+              failedHoistCost,
+              `吊装失败：归因【${HOIST_CAUSE_LABEL['BUYER_ENVIRONMENT']}】，已发生吊装费 ¥${money(failedHoistCost)} 由买家承担（退货时从退款扣除，冲抵平台垫付）`,
+              block?.id || null,
+            );
+          }
+          returnCost += failedHoistCost;
+        }
+        platformIncome = Math.round(
+          (-returnCost + thirdPartyClaim + buyerBorneOnReturn) * 100,
+        ) / 100;
       } else {
         const commission = Math.round(deal * rate * 100) / 100;
         add(
@@ -194,12 +260,26 @@ export class SettlementController {
             `配送费（来源：基础 ¥60 + 无电梯楼层 ¥15/层 + 旧家具搬出 ¥80）`,
           );
         }
+        if (surcharge > 0 && block) {
+          add(
+            'RESCHEDULE_FEE',
+            surcharge,
+            `配送改约附加费（大件原无法上楼）：方案【${OPTION_LABEL[block.buyerOption || ''] || block.buyerOption}】` +
+              (block.buyerOption === 'HOIST'
+                ? `吊装公司「${block.hoistCompany}」吊装费`
+                : block.buyerOption === 'DISASSEMBLY'
+                  ? '现场拆装+人工加价'
+                  : '改送他址转运费') +
+              ` ¥${money(surcharge)}（来源：配送改约单 ${block.code}，在原配送费之外向买家收取）`,
+            block.id,
+          );
+        }
         sellerPayout = Math.max(
           0,
           Math.round((deal - commission - refurb - storageFee - sellerBorne) * 100) / 100,
         );
         platformIncome =
-          Math.round((commission + deliveryFee - platformBorne) * 100) / 100;
+          Math.round((commission + deliveryFee + surcharge - platformBorne) * 100) / 100;
       }
 
       resolved.forEach((t) => {
@@ -261,6 +341,7 @@ export class SettlementController {
       Appraisal,
       Ticket,
       Consignment,
+      DeliveryBlock,
     ]),
   ],
   controllers: [SettlementController],
